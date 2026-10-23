@@ -356,7 +356,7 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
   })
 
   const runFirstChapter = (): Promise<boolean> =>
-    runStep(5, 'draft', () => firstChapterMessages(productNow('')), tokensForWords(form.perChapter), applyFirstChapter)
+    runStep(5, 'draft', () => firstChapterMessages(productNow(''), useApp.getState().styleLibrary), tokensForWords(form.perChapter), applyFirstChapter)
 
   const runner = (step: number): Promise<boolean> => {
     switch (step) {

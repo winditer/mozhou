@@ -42,6 +42,8 @@ export function Workspace(): ReactNode {
   const tab = useApp((s) => s.tab)
   const setTab = useApp((s) => s.setTab)
   const config = useApp((s) => s.config)
+  /** 系统文风分身库：正文/改写都要用它解析引用型分身，否则会退回引用时的旧快照 */
+  const styleLibrary = useApp((s) => s.styleLibrary)
   const activeChapterId = useApp((s) => s.activeChapterId)
   const aiPanelOpen = useApp((s) => s.aiPanelOpen)
   const toggleAiPanel = useApp((s) => s.toggleAiPanel)
@@ -248,6 +250,7 @@ export function Workspace(): ReactNode {
           model: r.model,
           task: 'draft',
           temperature: config?.settings.temperature ?? 0.85,
+          library: styleLibrary,
           instruction: midSentence
             ? `${instruction}\n（注意：作者的句子只写了一半，你要顺着这半句话写下去，不要另起一段，也不要重写已经写出的部分。）`
             : instruction,
@@ -287,6 +290,7 @@ export function Workspace(): ReactNode {
           model: r.model,
           task: 'draft',
           temperature: config?.settings.temperature ?? 0.85,
+          library: styleLibrary,
           instruction: '把这一段重写得更好：节奏更紧，句子更有张力，不要丢掉原有的情节信息。',
           targetWords: target,
           lengthGuard: false,
@@ -320,6 +324,7 @@ export function Workspace(): ReactNode {
           model: r.model,
           task: 'polish',
           temperature: 0.7,
+          library: styleLibrary,
           selection: captured,
           instruction,
           onDelta,

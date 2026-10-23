@@ -1,4 +1,5 @@
 import type { Channel, Chapter, Project, TaskKind } from '@shared/types'
+import type { StyleLibrary } from '@shared/styleLibrary'
 import { countWords, stripHtml, truncate } from '@shared/utils'
 import { sendChat } from './ai'
 import {
@@ -18,6 +19,12 @@ export interface GenParams {
   model: string
   task: TaskKind
   temperature?: number
+  /**
+   * 系统文风分身库。放在基类参数上而不是逐处传，是因为「引用型分身」的书
+   * 每条生成路径（正文/改写/大纲/对话/一键开书）都必须拿到同一份库，
+   * 漏传一处就会退回到引用时的旧快照，写得跟别处不一样却查不出原因。
+   */
+  library?: StyleLibrary | null
   onDelta: (d: string) => void
   /** 思考增量（reasoning_content 等），只用于进度展示，不属于正文 */
   onThought?: (d: string) => void
@@ -42,15 +49,20 @@ export interface DraftGenParams extends GenParams {
  * 每轮都通过 onDelta 继续追加到界面上，用户看到的是连贯的流。
  */
 export async function generateDraft(p: DraftGenParams): Promise<string> {
-  const messages = buildDraftMessages(p.project, p.chapter, {
-    instruction: p.instruction,
-    targetWords: p.targetWords,
-    selection: p.selection,
-    chapterTitle: p.chapter?.title,
-    anchorText: p.anchorText,
-    tailText: p.tailText,
-    rewriteParagraph: p.rewriteParagraph
-  })
+  const messages = buildDraftMessages(
+    p.project,
+    p.chapter,
+    {
+      instruction: p.instruction,
+      targetWords: p.targetWords,
+      selection: p.selection,
+      chapterTitle: p.chapter?.title,
+      anchorText: p.anchorText,
+      tailText: p.tailText,
+      rewriteParagraph: p.rewriteParagraph
+    },
+    p.library
+  )
   let text = ''
   p.onStage?.('正在生成…')
   const first = await sendChat({
@@ -105,7 +117,7 @@ export async function generateDraft(p: DraftGenParams): Promise<string> {
 export async function generateSelection(
   p: GenParams & { selection: string; instruction: string }
 ): Promise<string> {
-  const messages = buildSelectionMessages(p.project, p.chapter, p.selection, p.instruction)
+  const messages = buildSelectionMessages(p.project, p.chapter, p.selection, p.instruction, p.library)
   const r = await sendChat({
     channel: p.channel,
     model: p.model,
@@ -137,11 +149,16 @@ export async function generateSummary(
 }
 
 export async function generateChatReply(
-  p: GenParams & { history: { role: 'user' | 'assistant'; content: string }[]; question: string }
+  p: GenParams & {
+    history: { role: 'user' | 'assistant'; content: string }[]
+    question: string
+    /** 系统文风分身库：对话也要跟书内生成用同一套生效文风 */
+    library?: StyleLibrary | null
+  }
 ): Promise<string> {
   // 对话时必须能看到「当前这一章」的正文，否则模型只会拿到前文/设定
   const ctx = assembleContext(p.project, p.chapter, 20000, { includeCurrent: true })
-  const system = `${buildSystemPrompt(p.project)}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。`
+  const system = `${buildSystemPrompt(p.project, 'prose', p.library)}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。`
   const ctxText = contextToText(ctx)
   const messages = [
     { role: 'system' as const, content: system },

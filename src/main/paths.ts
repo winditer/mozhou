@@ -37,6 +37,11 @@ export function secretsFile(): string {
   return join(dataRoot(), 'secrets.json')
 }
 
+/** 系统文风分身库（全局共享，跨书引用） */
+export function styleLibraryFile(): string {
+  return join(dataRoot(), 'style-library.json')
+}
+
 export function backupDir(): string {
   return join(dataRoot(), 'backups')
 }

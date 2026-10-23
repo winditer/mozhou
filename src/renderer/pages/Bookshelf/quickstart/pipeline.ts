@@ -12,6 +12,7 @@ import { getGenre } from '@shared/genres'
 import { COVER_COLORS, createBlankProject } from '@shared/factory'
 import { clamp, countWords, estimateTokens, truncate, uid } from '@shared/utils'
 import { textToParagraphHtml } from '../../../lib/generate'
+import type { StyleLibrary } from '@shared/styleLibrary'
 import { buildDraftMessages } from '../../../lib/prompt'
 
 /* ───────────────────────── 类型 ───────────────────────── */
@@ -616,14 +617,19 @@ ${digest(input.settings) || '（尚未确定）'}
  * 先把已定产物装配成临时 Project，复用 buildSystemPrompt / assembleContext
  * 那套上下文机制，保证设定与章纲都被注入。
  */
-export function firstChapterMessages(product: QuickStartProduct): PromptMessage[] {
+export function firstChapterMessages(product: QuickStartProduct, library?: StyleLibrary | null): PromptMessage[] {
   const project = assembleProject({ ...product, firstChapter: '' })
   const chapter = project.chapters[0] ?? null
-  return buildDraftMessages(project, chapter, {
-    instruction: `写出《${product.title.title}》第一章的完整正文。严格按本章情节点展开，第一段就要把读者拉进场景；不要复述设定，不要写「本章看点」，不要总结。`,
-    targetWords: product.perChapter,
-    chapterTitle: chapter?.title
-  })
+  return buildDraftMessages(
+    project,
+    chapter,
+    {
+      instruction: `写出《${product.title.title}》第一章的完整正文。严格按本章情节点展开，第一段就要把读者拉进场景；不要复述设定，不要写「本章看点」，不要总结。`,
+      targetWords: product.perChapter,
+      chapterTitle: chapter?.title
+    },
+    library
+  )
 }
 
 /** 提示词估算 token（渠道不回 usage 时兜底） */

@@ -8,8 +8,14 @@ import type {
   TaskKind
 } from '@shared/types'
 import { TASK_LABELS } from '@shared/types'
+import type { StyleLibrary } from '@shared/styleLibrary'
 import { countWords, uid } from '@shared/utils'
 import { mz } from '../lib/bridge'
+
+/** 库载入失败时的兜底：空库仍然能工作（书里自建的分身照常生效），只是没有系统分身可选 */
+function emptyLibrary(): StyleLibrary {
+  return { version: 1, seedVersion: 0, personas: [] }
+}
 
 export type ViewName = 'bookshelf' | 'workspace' | 'settings'
 export type WorkspaceTab = 'write' | 'outline' | 'bible' | 'ideas' | 'style' | 'audit' | 'stats'
@@ -42,8 +48,12 @@ interface AppState {
   aiPanel: 'chat' | 'context'
   toasts: Toast[]
   loadingProject: boolean
+  /** 系统文风分身库（全局共享）。null = 还没载入完；载入失败时是空库，不是 null */
+  styleLibrary: StyleLibrary | null
 
   init: () => Promise<void>
+  loadStyleLibrary: () => Promise<void>
+  saveStyleLibrary: (fn: (lib: StyleLibrary) => StyleLibrary) => Promise<boolean>
   refreshProjects: () => Promise<void>
   setView: (v: ViewName) => void
   setTab: (t: WorkspaceTab) => void
@@ -88,10 +98,14 @@ export const useApp = create<AppState>((set, get) => ({
   aiPanel: 'chat',
   toasts: [],
   loadingProject: false,
+  styleLibrary: null,
 
   async init() {
     const [info, config, projects] = await Promise.all([mz.app.info(), mz.config.get(), mz.project.list()])
     set({ appInfo: info, config, projects, ready: true })
+    // 库单独载入：老版本 preload 没有 window.mz.library、或 library.json 损坏时，
+    // 不能让整个应用起不来——那会把「文风分身不可用」升级成「软件打不开」。
+    await get().loadStyleLibrary()
     if (!config.settings.firstRunDone) {
       // 只有「真正第一次打开」（一本书都没有）才把首屏留在设置页引导配置模型；
       // 已经有作品的老用户直接进书架，否则每次启动都被丢回设置页。
@@ -106,6 +120,30 @@ export const useApp = create<AppState>((set, get) => ({
   async refreshProjects() {
     const projects = await mz.project.list()
     set({ projects })
+  },
+
+  async loadStyleLibrary() {
+    try {
+      // 老版本 preload 上 mz.library 是 undefined，在这里就会抛 TypeError，正好被兜住
+      const lib = await mz.library.get()
+      set({ styleLibrary: lib ?? emptyLibrary() })
+    } catch {
+      set({ styleLibrary: emptyLibrary() })
+      get().toast('文风分身库载入失败', 'error')
+    }
+  },
+
+  async saveStyleLibrary(fn) {
+    const cur = get().styleLibrary
+    try {
+      const next = fn(cur ?? emptyLibrary())
+      const saved = await mz.library.save(next)
+      set({ styleLibrary: saved ?? next })
+      return true
+    } catch (e) {
+      get().toast(`文风分身库保存失败：${(e as Error).message}`, 'error')
+      return false
+    }
   },
 
   setView(v) {
@@ -308,6 +346,11 @@ export function activeChapter(state: AppState): Chapter | null {
 export function totalWords(p: Project | null): number {
   if (!p) return 0
   return p.chapters.reduce((s, c) => s + (c.words || 0), 0)
+}
+
+/** 系统文风分身库。单独导出选择器，方便组件只订阅这一块而不被 project 的每次 patch 唤醒 */
+export function styleLibraryOf(state: AppState): StyleLibrary | null {
+  return state.styleLibrary
 }
 
 export function resolveTaskModel(config: Config | null, project: Project | null, task: TaskKind): { channel: any; model: string; label: string } | null {

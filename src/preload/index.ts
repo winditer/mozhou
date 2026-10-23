@@ -29,6 +29,11 @@ const api = {
     secretHas: (ref: string) => invoke('secret:has', ref),
     secretClear: (ref: string) => invoke('secret:clear', ref)
   },
+  library: {
+    get: () => invoke('library:get'),
+    save: (lib: unknown) => invoke('library:save', lib),
+    resetBuiltin: () => invoke('library:reset-builtin')
+  },
   project: {
     list: () => invoke('project:list'),
     create: (project: unknown) => invoke('project:create', project),

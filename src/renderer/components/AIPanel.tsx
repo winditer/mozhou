@@ -57,6 +57,7 @@ export function AIPanel({
         task: 'chat',
         history,
         question: q,
+        library: useApp.getState().styleLibrary,
         onDelta: (d) => {
           acc += d
           setDraft(acc)

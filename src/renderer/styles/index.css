@@ -247,6 +247,14 @@
   border-color: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
+/* 失效状态：书内引用的系统分身被删了之类。
+   比普通 chip 醒目，但用弱化过的红，读起来像「提示」而不是「报错」。 */
+.chip-danger {
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel));
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 26%, transparent);
+}
+
 .label {
   font-size: 12px;
   color: var(--text-dim);

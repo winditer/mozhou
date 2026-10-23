@@ -19,6 +19,8 @@ export const FALLBACK_TRAIT = '贴合下方样本的句子节奏、用词密度�
 export interface StyleSource {
   traits: string[]
   samples: string[]
+  /** 分身取法的一句话摘要：引用系统分身时才有，放在特征前作为总纲 */
+  summary?: string
 }
 
 export function cleanList(list: string[]): string[] {
@@ -105,25 +107,28 @@ const TRIAL_BASE = [
 
 /**
  * 与 lib/prompt.ts 注入格式保持一致：
- * 特征逐条编号 + 前 3 段样本，让试写结果能代表真实生成效果。
+ * 摘要一行 + 特征逐条编号 + 前 3 段样本，让试写结果能代表真实生成效果。
  * 没有特征卡时仍注入样本，避免「裸写」与「带分身」两栏完全一样而误导判断。
  */
 export function styleBlock(src: StyleSource): string {
+  const summary = (src.summary ?? '').trim()
   const traits = cleanList(src.traits)
   const samples = cleanList(src.samples).slice(0, 3)
+  // 和 lib/prompt.ts 的 renderStyleBlock 同一条判据：没有任何特征/样本就不注入。
+  // 只有摘要时也不注入——摘要说明的是「怎么取法」，没有细则时它落不到可执行的指令上。
   if (!traits.length && !samples.length) return ''
 
-  const head = traits.length
-    ? `【文风要求 —— 必须严格遵守】\n${traits.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
-    : '【文风要求】\n贴合下面样本的句子节奏与用词习惯。'
-
+  const title = traits.length ? '【文风要求 —— 必须严格遵守】' : '【文风要求】\n贴合下面样本的句子节奏与用词习惯。'
+  // 摘要必须紧跟标题、在编号特征之前：它先说「怎么取法」，特征再说细则
+  const intro = summary ? `\n本分身取法：${summary}` : ''
+  const list = traits.length ? `\n${traits.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : ''
   const tail = samples.length
     ? `\n下面是作者的原文样本，请仔细体会其句子节奏、用词习惯与叙述密度，写作时保持同样的笔感：\n\n${samples
         .map((x, i) => `〈样本 ${i + 1}〉\n${truncate(x, 1600)}`)
         .join('\n\n')}`
     : ''
 
-  return `${head}${tail}`
+  return `${title}${intro}${list}${tail}`
 }
 
 export function buildTrialMessages(seed: string, src: StyleSource | null): PromptMessage[] {

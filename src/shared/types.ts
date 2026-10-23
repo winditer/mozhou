@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import type { StyleLibrary, StylePersona, StyleRef } from './styleLibrary'
 
 /* ────────────────────────────── 渠道与模型 ────────────────────────────── */
 
@@ -223,6 +224,14 @@ export interface StyleProfile {
   samples: string[]
   traits: string[]
   active: boolean
+  /** 风格摘要：引用系统分身时同步过来，也允许用户改 */
+  summary?: string
+  /**
+   * 引用系统文风分身库里的某个分身。
+   * 有值时为「引用态」：生成前按 sourceId 回系统库取当前值（实时跟随）；
+   * 无值时为「书内自建」：只用本对象的 traits / samples。
+   */
+  sourceRef?: StyleRef
 }
 
 export interface Idea {
@@ -394,6 +403,13 @@ export interface MzApi {
     secretSet(ref: string, value: string): Promise<boolean>
     secretHas(ref: string): Promise<boolean>
     secretClear(ref: string): Promise<void>
+  }
+  /** 系统文风分身库：全局共享、跨书引用 */
+  library: {
+    get(): Promise<StyleLibrary>
+    save(lib: StyleLibrary): Promise<StyleLibrary>
+    /** 恢复内置种子：保留用户自建分身，把内置分身恢复为出厂状态 */
+    resetBuiltin(): Promise<StyleLibrary>
   }
   project: {
     list(): Promise<ProjectMeta[]>

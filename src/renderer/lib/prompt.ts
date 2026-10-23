@@ -1,11 +1,50 @@
 import type { Chapter, Project, PromptMessage } from '@shared/types'
 import { getScene } from '@shared/scenes'
 import { getGenre } from '@shared/genres'
+import { resolveRef } from '@shared/styleLibrary'
+import type { StyleLibrary } from '@shared/styleLibrary'
 import { countWords, estimateTokens, stripHtml, truncate } from '@shared/utils'
 
 /* ───────────────────── 系统提示词 ───────────────────── */
 
-export function buildSystemPrompt(project: Project, mode: 'prose' | 'outline' = 'prose'): string {
+/**
+ * 把生效文风渲染成提示词块。试写页（style/prompts.ts 的 styleBlock）用的是同一套格式，
+ * 两处必须一致，否则「试写看到的」和「真正生成出来的」就不是一回事。
+ *
+ * 有特征时：标题 + 「本分身取法」摘要 + 逐条编号特征 + 样本；
+ * 没特征时退回「严格贴合样本」，此时摘要挂在标题下一行，避免只挂摘要、模型拿不到可执行约束。
+ */
+export function renderStyleBlock(style: { summary?: string; traits: string[]; samples: string[] }): string {
+  const summary = (style.summary ?? '').trim()
+  const traits = style.traits.filter(Boolean)
+  const samples = style.samples.filter((x) => x && x.trim())
+  if (!traits.length && !samples.length) return ''
+
+  // 三种顺序拼装：标题 → 「本分身取法」摘要 → 编号特征 → 样本。
+  // 摘要必须在特征之前：它先说「这套文风怎么取法」的总纲，再给可逐条核对的细则。
+  const title = traits.length ? '【文风要求 —— 必须严格遵守】' : '【文风要求 —— 严格贴合下方样本】'
+  const intro = summary ? `\n本分身取法：${summary}` : ''
+  const list = traits.length ? `\n${traits.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : ''
+  const body = samples.length
+    ? `\n下面是作者的原文样本，请仔细体会其句子节奏、用词习惯与叙述密度，写作时保持同样的笔感：\n\n${samples
+        .slice(0, 3)
+        .map((x, i) => `〈样本 ${i + 1}〉\n${truncate(x, 1600)}`)
+        .join('\n\n')}`
+    : ''
+
+  return `${title}${intro}${list}${body}`
+}
+
+/**
+ * `library` 是系统文风分身库：只有当本书激活的 profile 处于「引用态」（有 sourceRef）时才用得上。
+ * 传 null/undefined 不是错误——那表示库还没载入或已损坏，此时 resolveRef 会回落到书内的本地覆盖字段，
+ * 生成照常进行，只是文风停在引用那一刻的样子。
+ */
+export function buildSystemPrompt(
+  project: Project,
+  mode: 'prose' | 'outline' = 'prose',
+  library?: StyleLibrary | null
+): string {
   const scene = getScene(project.sceneId)
   const genre = project.genreId ? getGenre(project.genreId) : undefined
   const s = project.settings
@@ -28,20 +67,14 @@ export function buildSystemPrompt(project: Project, mode: 'prose' | 'outline' = 
 
   const style = project.styleProfiles.find((x) => x.active)
   if (style && s.context.style !== false) {
-    const traits = style.traits.filter(Boolean)
-    const samples = style.samples.filter((x) => x && x.trim())
-    if (traits.length || samples.length) {
-      const head = traits.length
-        ? `【文风要求 —— 必须严格遵守】\n${traits.map((t, i) => `${i + 1}. ${t}`).join('\n')}`
-        : '【文风要求 —— 严格贴合下方样本】'
-      const body = samples.length
-        ? `\n下面是作者的原文样本，请仔细体会其句子节奏、用词习惯与叙述密度，写作时保持同样的笔感：\n\n${samples
-            .slice(0, 3)
-            .map((x, i) => `〈样本 ${i + 1}〉\n${truncate(x, 1600)}`)
-            .join('\n\n')}`
-        : ''
-      parts.push(head + body)
-    }
+    // 引用系统分身时以库里的当前值为准（系统库改了，所有书立刻跟着变）；
+    // 来源已被删除时 resolveRef 会回落成本地覆盖字段并标记 missing——这里照常注入，
+    // 因为「文风暂时停在旧样子」远好过「突然变成裸写」。
+    const resolved = style.sourceRef ? resolveRef(style.sourceRef, style, library?.personas) : null
+    // 未引用系统分身时就是书内自建：用 profile 自己的字段，summary 可能是空的
+    const effective = resolved ?? { summary: style.summary, traits: style.traits, samples: style.samples }
+    const block = renderStyleBlock(effective)
+    if (block) parts.push(block)
   }
 
   // 大纲任务和正文任务的输出纪律完全不同：正文禁止标题编号，大纲反而必须逐行编号，
@@ -250,8 +283,13 @@ export interface DraftOptions {
   rewriteParagraph?: string
 }
 
-export function buildDraftMessages(project: Project, chapter: Chapter | null, opts: DraftOptions): PromptMessage[] {
-  const system = buildSystemPrompt(project)
+export function buildDraftMessages(
+  project: Project,
+  chapter: Chapter | null,
+  opts: DraftOptions,
+  library?: StyleLibrary | null
+): PromptMessage[] {
+  const system = buildSystemPrompt(project, 'prose', library)
   const ctx = assembleContext(project, chapter)
   const contextText = contextToText(ctx)
   const existing = chapter ? stripHtml(chapter.content).trim() : ''
@@ -307,9 +345,10 @@ export function buildSelectionMessages(
   project: Project,
   chapter: Chapter | null,
   selection: string,
-  instruction: string
+  instruction: string,
+  library?: StyleLibrary | null
 ): PromptMessage[] {
-  const system = buildSystemPrompt(project)
+  const system = buildSystemPrompt(project, 'prose', library)
   const ctx = assembleContext(project, chapter)
   const contextText = contextToText(ctx)
   const user = `${contextText ? `【作品资料】\n${contextText}\n\n` : ''}【原文片段】\n${selection}\n\n【处理要求】\n${instruction}\n\n只输出处理后的文本，不要任何说明。`
@@ -333,8 +372,12 @@ export function buildSummaryMessages(project: Project, chapter: Chapter): Prompt
   ]
 }
 
-export function buildOutlineMessages(project: Project, instruction: string): PromptMessage[] {
-  const system = buildSystemPrompt(project, 'outline')
+export function buildOutlineMessages(
+  project: Project,
+  instruction: string,
+  library?: StyleLibrary | null
+): PromptMessage[] {
+  const system = buildSystemPrompt(project, 'outline', library)
   const ctx = assembleContext(project, null)
   return [
     { role: 'system', content: system },

@@ -2,6 +2,7 @@ import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename } from 'node:path'
 import type { Channel, ChatRequest, Config, FilePickResult, Project, ProjectMeta } from '@shared/types'
+import type { StyleLibrary } from '@shared/styleLibrary'
 import { splitChapters, plainToHtml, countWords, uid } from '@shared/utils'
 import {
   clearSecret,
@@ -11,6 +12,13 @@ import {
   saveConfig,
   setSecret
 } from '../storage/config'
+import {
+  loadStyleLibrary,
+  mergeLibraryFromBackup,
+  readLibraryForBackup,
+  resetBuiltinPersonas,
+  saveStyleLibrary
+} from '../storage/styleLibrary'
 import {
   collectAllProjects,
   createProject,
@@ -65,6 +73,11 @@ export function registerIpc(): void {
   ipcMain.handle('secret:set', async (_e, ref: string, value: string) => setSecret(ref, value))
   ipcMain.handle('secret:has', async (_e, ref: string) => hasSecret(ref))
   ipcMain.handle('secret:clear', async (_e, ref: string) => clearSecret(ref))
+
+  /* ───── 系统文风分身库 ───── */
+  ipcMain.handle('library:get', async () => loadStyleLibrary())
+  ipcMain.handle('library:save', async (_e, lib: StyleLibrary) => saveStyleLibrary(lib))
+  ipcMain.handle('library:reset-builtin', async () => resetBuiltinPersonas())
 
   /* ───── project ───── */
   ipcMain.handle('project:list', async (): Promise<ProjectMeta[]> => listProjects())
