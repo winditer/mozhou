@@ -7,6 +7,26 @@
   "author": "Mozhou",
   "license": "MIT",
   "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:win": "electron-vite build && electron-builder --win",
+    "dist:dir": "electron-vite build && electron-builder --dir",
+    "seed": "node scripts/seed-testdata.cjs",
+    "shot": "node scripts/shot.cjs",
+    "test:textcraft": "node scripts/test-textcraft.mjs",
+    "test:search": "node scripts/test-search.mjs",
+    "test:search:e2e": "node scripts/test-search-e2e.mjs",
+    "test:style": "node scripts/test-style-library.mjs",
+    "test:genre": "node scripts/test-genre-convention.mjs",
+    "test:quickstart": "node scripts/test-quickstart.mjs",
+    "test:budgets": "node scripts/test-budgets.mjs",
+    "test:config": "node scripts/test-config-merge.mjs",
+    "test:generate-budgets": "node scripts/test-generate-budgets.mjs"
+  },
   "dependencies": {
     "@tiptap/extension-character-count": "^3.32.0",
     "@tiptap/extension-highlight": "^3.32.0",
@@ -22,5 +42,19 @@
     "react-dom": "^19.3.1",
     "turndown": "^7.2.4",
     "zustand": "^5.0.16"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/turndown": "^5.0.5",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.8.3",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^6.0.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7"
   }
 }
