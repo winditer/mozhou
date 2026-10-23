@@ -11,7 +11,7 @@ import {
 } from '@shared/budgets'
 import { Button, IconButton, Input } from '../../components/ui'
 import { useApp } from '../../store/app'
-import { LoadingHint, PageHead, patchSettingsSafe } from './common'
+import { LoadingHint, PageHead, Row, patchSettingsSafe } from './common'
 
 /* ───────────────────────── 分组表 ───────────────────────── */
 
@@ -338,56 +338,40 @@ function BudgetRow({
   const shown: TokenBudget = budget ?? DEFAULT_TOKEN_BUDGETS[row.key]
 
   return (
-    <div className="py-3" style={first ? undefined : { borderTop: '1px solid var(--border)' }}>
-      <div className="flex items-start justify-between gap-6">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[13px]">
-            <span>{row.label}</span>
+    <div
+      className="py-3"
+      style={first ? undefined : { borderTop: '1px solid var(--border)' }}
+    >
+      <Row
+        align="start"
+        title={row.label}
+        tag={
+          <span className="chip" style={{ height: 18 }}>
+            {shown.kind === 'perWord' ? '按字数' : '固定额度'}
+          </span>
+        }
+        desc={row.desc}
+        note={row.note}
+        control={
+          <>
             {shown.kind === 'perWord' ? (
-              <span className="chip" style={{ height: 18 }}>
-                按字数
-              </span>
+              <PerWordInputs value={shown} onWrite={(next) => onWrite(clampBudget(next))} />
             ) : (
-              <span className="chip" style={{ height: 18 }}>
-                固定额度
-              </span>
+              <FixedInput value={shown.tokens} onWrite={(tokens) => onWrite({ kind: 'fixed', tokens })} />
             )}
-          </div>
-          <div
-            className="mt-0.5 text-[11.5px] leading-relaxed"
-            style={{ color: 'var(--text-faint)', wordBreak: 'break-word' }}
-          >
-            {row.desc}
-          </div>
-          {row.note && (
-            <div className="mt-1 text-[11.5px] leading-relaxed" style={{ color: 'var(--warn)', wordBreak: 'break-word' }}>
-              {row.note}
-            </div>
-          )}
-        </div>
-
-        <div className="shrink-0 flex items-center gap-2">
-          {shown.kind === 'perWord' ? (
-            <PerWordInputs
-              value={shown}
-              onWrite={(next) => onWrite(clampBudget(next))}
-            />
-          ) : (
-            <FixedInput value={shown.tokens} onWrite={(tokens) => onWrite({ kind: 'fixed', tokens })} />
-          )}
-          <IconButton
-            onClick={onReset}
-            disabled={isDefault}
-            title={isDefault ? '已经是默认值' : '恢复默认'}
-            aria-label={`恢复「${row.label}」默认值`}
-            style={isDefault ? { opacity: 0.3 } : undefined}
-          >
-            <RotateCcw size={13} />
-          </IconButton>
-        </div>
-      </div>
-
-      {shown.kind === 'perWord' && <PerWordHints value={shown} />}
+            <IconButton
+              onClick={onReset}
+              disabled={isDefault}
+              title={isDefault ? '已经是默认值' : '恢复默认'}
+              aria-label={`恢复「${row.label}」默认值`}
+              style={isDefault ? { opacity: 0.3 } : undefined}
+            >
+              <RotateCcw size={13} />
+            </IconButton>
+          </>
+        }
+        below={shown.kind === 'perWord' ? <PerWordHints value={shown} /> : undefined}
+      />
     </div>
   )
 }

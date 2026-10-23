@@ -125,26 +125,63 @@ export function Row({
   title,
   desc,
   control,
-  htmlForId
+  htmlForId,
+  tag,
+  note,
+  below,
+  align = 'center',
+  className
 }: {
   title: string
   desc?: string
   control: ReactNode
   htmlForId?: string
+  /** 标题后的短标签（如「按字数」「固定额度」） */
+  tag?: ReactNode
+  /** 说明下方的补充提示，用于需要注意的例外情况 */
+  note?: ReactNode
+  /** 行内控件区下方的整行内容，用于随控件变化的小字说明 */
+  below?: ReactNode
+  /** 控件较高时用 start，让标题与控件顶部对齐 */
+  align?: 'center' | 'start'
+  /** 需要自定义行外框（如加分隔线、改内边距）时传入；此时不再套默认 py-2.5 */
+  className?: string
 }): ReactNode {
-  return (
-    <div className="flex items-center justify-between gap-6 py-2.5">
+  const inner = (
+    <div
+      className={`flex ${align === 'start' ? 'items-start' : 'items-center'} justify-between gap-6${className ? '' : ' py-2.5'}`}
+    >
       <div className="min-w-0">
-        <label htmlFor={htmlForId} className="text-[13px]">
-          {title}
-        </label>
+        {tag ? (
+          <div className="flex items-center gap-2 text-[13px]">
+            <span>{title}</span>
+            {tag}
+          </div>
+        ) : (
+          <label htmlFor={htmlForId} className="text-[13px]">
+            {title}
+          </label>
+        )}
         {desc && (
           <div className="mt-0.5 text-[11.5px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
             {desc}
           </div>
         )}
+        {note && (
+          <div className="mt-1 text-[11.5px] leading-relaxed" style={{ color: 'var(--warn)' }}>
+            {note}
+          </div>
+        )}
       </div>
       <div className="shrink-0 flex items-center gap-2">{control}</div>
+    </div>
+  )
+
+  if (!className && !below) return inner
+  return (
+    <div className={className}>
+      {inner}
+      {below}
     </div>
   )
 }
