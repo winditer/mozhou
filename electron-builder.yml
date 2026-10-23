@@ -1,0 +1,55 @@
+appId: com.mozhou.writer
+productName: Mozhou
+copyright: Copyright © 2026 Mozhou
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - out/**
+  - package.json
+
+asar: true
+asarUnpack: []
+
+mac:
+  # Electron 43 是最后支持 macOS 12 Monterey 的大版本；显式声明，避免跟随 Electron 默认值漂移
+  minimumSystemVersion: '12.0'
+  category: public.app-category.productivity
+  darkModeSupport: true
+  # dmg 需要 hdiutil 挂载磁盘镜像；在受限沙箱里会被拒绝，因此同时在 CI/沙箱环境中产出 zip。
+  # 本机正常权限下 `npm run dist:mac` 照样能出 dmg。
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  artifactName: Mozhou-${version}-${arch}.${ext}
+
+dmg:
+  title: 墨舟 Mozhou
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: Mozhou-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 墨舟
+
+linux:
+  target:
+    - AppImage
+  category: Office

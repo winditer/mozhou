@@ -1,0 +1,14 @@
+node_modules/
+out/
+release/
+dist/
+.cache/
+.home/
+*.log
+.DS_Store
+.env
+.env.local
+Thumbs.db
+.testdata
+shots
+dsh-image-gen
