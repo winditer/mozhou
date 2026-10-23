@@ -251,6 +251,7 @@ export function Workspace(): ReactNode {
           task: 'draft',
           temperature: config?.settings.temperature ?? 0.85,
           library: styleLibrary,
+          conventions: config?.settings.genreConventions,
           instruction: midSentence
             ? `${instruction}\n（注意：作者的句子只写了一半，你要顺着这半句话写下去，不要另起一段，也不要重写已经写出的部分。）`
             : instruction,
@@ -291,6 +292,7 @@ export function Workspace(): ReactNode {
           task: 'draft',
           temperature: config?.settings.temperature ?? 0.85,
           library: styleLibrary,
+          conventions: config?.settings.genreConventions,
           instruction: '把这一段重写得更好：节奏更紧，句子更有张力，不要丢掉原有的情节信息。',
           targetWords: target,
           lengthGuard: false,
@@ -325,6 +327,7 @@ export function Workspace(): ReactNode {
           task: 'polish',
           temperature: 0.7,
           library: styleLibrary,
+          conventions: config?.settings.genreConventions,
           selection: captured,
           instruction,
           onDelta,

@@ -31,7 +31,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastProjectId: null,
   temperature: 0.85,
   firstRunDone: false,
-  showWordCountBar: true
+  showWordCountBar: true,
+  // 空表 = 全部沿用 genres.ts 的内置公约；作者在设置里改过谁就出现谁
+  genreConventions: {}
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -47,8 +49,31 @@ export async function loadConfig(): Promise<Config> {
     version: raw.version ?? 1,
     channels: (raw.channels ?? []).map(normalizeChannel),
     models: (raw.models ?? []).map(normalizeModel),
-    settings: { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}), shelfCoverSize: normalizeCoverSize(raw.settings?.shelfCoverSize), typography: { ...DEFAULT_SETTINGS.typography, ...(raw.settings?.typography ?? {}) }, taskModels: { ...DEFAULT_SETTINGS.taskModels, ...(raw.settings?.taskModels ?? {}) } }
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...(raw.settings ?? {}),
+      shelfCoverSize: normalizeCoverSize(raw.settings?.shelfCoverSize),
+      typography: { ...DEFAULT_SETTINGS.typography, ...(raw.settings?.typography ?? {}) },
+      taskModels: { ...DEFAULT_SETTINGS.taskModels, ...(raw.settings?.taskModels ?? {}) },
+      genreConventions: normalizeConventions(raw.settings?.genreConventions)
+    }
   }
+}
+
+/**
+ * 题材公约覆盖表是用户手写正文，落盘前必须洗一遍：
+ * 丢掉空值 / 非字符串（空值等于「恢复默认」，存着只会让解析逻辑多绕一步），
+ * 顺手去首尾空白，避免「改了两个空格」也算覆盖、在设置页里显示成已自定义。
+ */
+function normalizeConventions(v: unknown): Record<string, string> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out: Record<string, string> = {}
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof val !== 'string') continue
+    const text = val.trim()
+    if (text) out[k] = text
+  }
+  return out
 }
 
 /** 老配置里可能存着已下线的 'sl' 档位，统一落到新的最小档 's' */
@@ -89,7 +114,12 @@ export async function saveConfig(config: Config): Promise<Config> {
     version: 1,
     channels: (config.channels ?? []).map(normalizeChannel),
     models: (config.models ?? []).map(normalizeModel),
-    settings: { ...DEFAULT_SETTINGS, ...config.settings }
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...config.settings,
+      // 保存时也洗一遍：设置页删空某条公约＝删掉这个键，不能留空串占位
+      genreConventions: normalizeConventions(config.settings?.genreConventions)
+    }
   }
   await writeJsonAtomic(configFile(), next)
   return next

@@ -1,11 +1,34 @@
 import type { Chapter, Project, PromptMessage } from '@shared/types'
 import { getScene } from '@shared/scenes'
-import { getGenre } from '@shared/genres'
+import { getGenre, resolveGenreConvention } from '@shared/genres'
+import type { GenreConventionOverrides } from '@shared/genres'
 import { resolveRef } from '@shared/styleLibrary'
 import type { StyleLibrary } from '@shared/styleLibrary'
 import { countWords, estimateTokens, stripHtml, truncate } from '@shared/utils'
 
 /* ───────────────────── 系统提示词 ───────────────────── */
+
+/**
+ * 「【题材】玄幻。…公约…」这一段的唯一真相。
+ *
+ * 注入（buildSystemPrompt）和右侧上下文面板的展示都走这里，
+ * 否则面板上写「已注入」而提示词里其实是空的，或者两处字数对不上——
+ * 这类不一致在作者眼里就是「面板骗人」，比不显示更糟。
+ *
+ * 返回空串表示这段不该出现（没选题材 / 题材 id 已失效 / 开关关掉了）。
+ */
+export function renderGenreBlock(
+  genreId: string | undefined | null,
+  conventions?: GenreConventionOverrides | null
+): string {
+  if (!genreId) return ''
+  const genre = getGenre(genreId)
+  // 题材名和公约任一缺失都不注入：只剩「【题材】。」比不写更容易带偏模型
+  if (!genre) return ''
+  const convention = resolveGenreConvention(genreId, conventions)
+  if (!convention) return ''
+  return `【题材】${genre.name}。${convention}`
+}
 
 /**
  * 把生效文风渲染成提示词块。试写页（style/prompts.ts 的 styleBlock）用的是同一套格式，
@@ -43,17 +66,19 @@ export function renderStyleBlock(style: { summary?: string; traits: string[]; sa
 export function buildSystemPrompt(
   project: Project,
   mode: 'prose' | 'outline' = 'prose',
-  library?: StyleLibrary | null
+  library?: StyleLibrary | null,
+  /** 设置里的题材公约覆盖表；不传就只吃内置默认值（试写页 / 测试就是这种情形） */
+  conventions?: GenreConventionOverrides | null
 ): string {
   const scene = getScene(project.sceneId)
-  const genre = project.genreId ? getGenre(project.genreId) : undefined
   const s = project.settings
   const parts: string[] = []
 
   parts.push(scene.systemPrompt)
 
-  if (genre && s.context.genre !== false) {
-    parts.push(`【题材】${genre.name}。${genre.convention}`)
+  if (s.context.genre !== false) {
+    const block = renderGenreBlock(project.genreId, conventions)
+    if (block) parts.push(block)
   }
 
   const rules: string[] = []
@@ -126,6 +151,8 @@ export interface ContextOptions {
    * 但「和 AI 讨论本章」时必须带上，否则模型根本看不到这一章写了什么。
    */
   includeCurrent?: boolean
+  /** 设置里的题材公约覆盖表，用于解析出真正生效的公约正文 */
+  conventions?: GenreConventionOverrides | null
 }
 
 export function assembleContext(
@@ -142,6 +169,13 @@ export function assembleContext(
     const t = text?.trim() ?? ''
     blocks.push({ key, label, text: t, tokens: t ? tok(t) : 0, enabled })
   }
+
+  // 题材公约排在第一位：它在提示词里位于系统提示词段（scene 之后、写作规范之前），
+  // 上下文面板也按这个顺序列，作者看到的先后与模型吃到的先后一致。
+  // 注意它是「预览」：真实注入文本在 buildSystemPrompt 里由 renderGenreBlock 生成，
+  // 两边共用同一个函数，所以这里的字数和提示词里的字数必然对得上。
+  // 题材公约不进 budget 裁剪（它在 system 段，永远不会被丢），但会计入总量统计。
+  push('genre', '题材公约', renderGenreBlock(project.genreId, opts.conventions), ctx.genre)
 
   if (ctx.brief) {
     const b = [
@@ -236,6 +270,7 @@ export function assembleContext(
   }
 
   // 预算裁剪：按优先级丢内容（远期梗概 → 设定全文 → 前文）
+  // genre 故意不在 dropOrder 里：它属于系统提示词段，永远整条注入，不该被当成可裁的正文资料。
   let total = blocks.reduce((sum, b) => sum + b.tokens, 0)
   let trimmed = false
   const dropOrder = ['earlier', 'terms', 'threads', 'bible', 'previous', 'characters', 'current']
@@ -259,7 +294,9 @@ export function assembleContext(
 
 export function contextToText(assembled: AssembledContext): string {
   return assembled.blocks
-    .filter((b) => b.text)
+    // genre 块只是给面板看的预览，真实注入发生在 buildSystemPrompt 的 system 段。
+    // 这里若也拼进去，题材公约就会在提示词里出现两遍，白烧 token 还会稀释约束力。
+    .filter((b) => b.text && b.key !== 'genre')
     .map((b) => `【${b.label}】\n${b.text}`)
     .join('\n\n')
 }
@@ -287,9 +324,10 @@ export function buildDraftMessages(
   project: Project,
   chapter: Chapter | null,
   opts: DraftOptions,
-  library?: StyleLibrary | null
+  library?: StyleLibrary | null,
+  conventions?: GenreConventionOverrides | null
 ): PromptMessage[] {
-  const system = buildSystemPrompt(project, 'prose', library)
+  const system = buildSystemPrompt(project, 'prose', library, conventions)
   const ctx = assembleContext(project, chapter)
   const contextText = contextToText(ctx)
   const existing = chapter ? stripHtml(chapter.content).trim() : ''
@@ -346,9 +384,10 @@ export function buildSelectionMessages(
   chapter: Chapter | null,
   selection: string,
   instruction: string,
-  library?: StyleLibrary | null
+  library?: StyleLibrary | null,
+  conventions?: GenreConventionOverrides | null
 ): PromptMessage[] {
-  const system = buildSystemPrompt(project, 'prose', library)
+  const system = buildSystemPrompt(project, 'prose', library, conventions)
   const ctx = assembleContext(project, chapter)
   const contextText = contextToText(ctx)
   const user = `${contextText ? `【作品资料】\n${contextText}\n\n` : ''}【原文片段】\n${selection}\n\n【处理要求】\n${instruction}\n\n只输出处理后的文本，不要任何说明。`
@@ -375,9 +414,10 @@ export function buildSummaryMessages(project: Project, chapter: Chapter): Prompt
 export function buildOutlineMessages(
   project: Project,
   instruction: string,
-  library?: StyleLibrary | null
+  library?: StyleLibrary | null,
+  conventions?: GenreConventionOverrides | null
 ): PromptMessage[] {
-  const system = buildSystemPrompt(project, 'outline', library)
+  const system = buildSystemPrompt(project, 'outline', library, conventions)
   const ctx = assembleContext(project, null)
   return [
     { role: 'system', content: system },

@@ -58,6 +58,7 @@ export function AIPanel({
         history,
         question: q,
         library: useApp.getState().styleLibrary,
+        conventions: useApp.getState().config?.settings.genreConventions,
         onDelta: (d) => {
           acc += d
           setDraft(acc)
@@ -234,7 +235,8 @@ export function AIPanel({
 
 function ContextView({ project, chapter }: { project: Project; chapter: Chapter | null }): ReactNode {
   const { patchProject } = useApp()
-  const ctx = assembleContext(project, chapter, 24000, { includeCurrent: true })
+  const conventions = useApp((s) => s.config?.settings.genreConventions)
+  const ctx = assembleContext(project, chapter, 24000, { includeCurrent: true, conventions })
   const toggles = project.settings.context
   const keys: { key: keyof typeof toggles; label: string }[] = [
     { key: 'brief', label: '作品简介' },
@@ -245,6 +247,8 @@ function ContextView({ project, chapter }: { project: Project; chapter: Chapter 
     { key: 'previous', label: '前文章节' },
     { key: 'style', label: '文风分身' }
   ]
+
+  const genreBlock = ctx.blocks.find((b) => b.key === 'genre')
 
   return (
     <div className="flex-1 min-h-0 overflow-auto scroll-thin px-3 py-3">
@@ -283,8 +287,34 @@ function ContextView({ project, chapter }: { project: Project; chapter: Chapter 
               </span>
             </div>
             {b.text && (
-              <div className="text-[11px] line-clamp-3 selectable" style={{ color: 'var(--text-dim)' }}>
-                {b.text}
+              // 题材公约用完整文本 + 可滚动，不截断：
+              // 它是唯一一段「作者可能想逐字核对」的内容（尤其自己改过之后），
+              // line-clamp-3 会把「避免开局即巅峰」这类关键约束卡在视野外。
+              b.key === 'genre' ? (
+                <div
+                  className="text-[11px] leading-relaxed selectable overflow-auto scroll-thin"
+                  style={{ color: 'var(--text-dim)', maxHeight: 132 }}
+                >
+                  {b.text}
+                </div>
+              ) : (
+                <div className="text-[11px] line-clamp-3 selectable" style={{ color: 'var(--text-dim)' }}>
+                  {b.text}
+                </div>
+              )
+            )}
+            {b.key === 'genre' && b.text && (
+              <div className="mt-1.5 text-[10.5px]" style={{ color: 'var(--text-faint)' }}>
+                注入位置：系统提示词（不占正文预算、不会被裁剪）
+                {' · '}
+                {conventions?.[project.genreId]?.trim() ? '已在设置里自定义' : '内置默认'}
+              </div>
+            )}
+            {b.key === 'genre' && !b.text && (
+              <div className="mt-0.5 text-[10.5px]" style={{ color: 'var(--text-faint)' }}>
+                {toggles.genre === false
+                  ? '开关已关闭，生成时不会注入题材约束'
+                  : '这本书还没有选题材，或所选题材没有公约可注入'}
               </div>
             )}
           </div>
@@ -292,7 +322,15 @@ function ContextView({ project, chapter }: { project: Project; chapter: Chapter 
       </div>
 
       <div className="mt-3 text-[10.5px]" style={{ color: 'var(--text-faint)' }}>
-        提示词整体估算约 {estimateTokens(ctx.blocks.map((b) => b.text).join('')) + 400} tokens
+        {genreBlock?.tokens ? `其中题材公约 ${genreBlock.tokens} tokens 位于系统提示词，` : ''}
+        提示词整体估算约{' '}
+        {estimateTokens(
+          ctx.blocks
+            .filter((b) => b.key !== 'genre')
+            .map((b) => b.text)
+            .join('')
+        ) + (genreBlock?.tokens ? genreBlock.tokens : 0) + 400}{' '}
+        tokens
       </div>
     </div>
   )

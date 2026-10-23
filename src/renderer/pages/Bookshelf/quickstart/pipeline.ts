@@ -8,7 +8,8 @@
  */
 import type { Character, OutlineNode, Project, PromptMessage, WorldEntry } from '@shared/types'
 import { getScene } from '@shared/scenes'
-import { getGenre } from '@shared/genres'
+import { getGenre, resolveGenreConvention } from '@shared/genres'
+import type { GenreConventionOverrides } from '@shared/genres'
 import { COVER_COLORS, createBlankProject } from '@shared/factory'
 import { clamp, countWords, estimateTokens, truncate, uid } from '@shared/utils'
 import { textToParagraphHtml } from '../../../lib/generate'
@@ -490,11 +491,19 @@ export function parseChaptersOutput(text: string): ChapterItem[] {
 /* ───────────────────────── 提示词 ───────────────────────── */
 
 /** 策划类任务的系统提示：场景人设 + 题材公约 + JSON 纪律 */
-function planSystem(sceneId: string, genreId: string, job: string): string {
+function planSystem(
+  sceneId: string,
+  genreId: string,
+  job: string,
+  conventions?: GenreConventionOverrides | null
+): string {
   const scene = getScene(sceneId)
   const genre = genreId ? getGenre(genreId) : undefined
+  // 与 buildSystemPrompt 用同一条解析链：作者改过的公约，一键开书也必须跟着改，
+  // 否则书是照内置公约开的、之后写在正文里却按自定义公约走，前后人设会打架。
+  const convention = resolveGenreConvention(genreId, conventions)
   const parts: string[] = [scene.systemPrompt]
-  if (genre) parts.push(`【题材】${genre.name}。${genre.convention}`)
+  if (genre && convention) parts.push(`【题材】${genre.name}。${convention}`)
   parts.push(
     `【注意】本轮不写正文，上面的人设与写作法则是你判断质量的标尺；下面的输出纪律优先级最高。`,
     `【本次工作】${job}`,
@@ -520,6 +529,8 @@ export interface IdeaInput {
   idea: string
   sceneId: string
   genreId: string
+  /** 设置里的题材公约覆盖表；不传就用内置公约 */
+  conventions?: GenreConventionOverrides | null
 }
 
 /** 步骤 1：书名 + 简介 */
@@ -535,7 +546,7 @@ export function titleMessages(input: IdeaInput): PromptMessage[] {
 只输出 JSON，不要 markdown 代码块：
 {"title":"书名","intro":"100–200 字简介"}`
   return [
-    { role: 'system', content: planSystem(input.sceneId, input.genreId, '为整本书定名并写简介') },
+    { role: 'system', content: planSystem(input.sceneId, input.genreId, '为整本书定名并写简介', input.conventions) },
     { role: 'user', content: user }
   ]
 }
@@ -558,7 +569,7 @@ kind 字段取值："world"（世界观/势力/地点/规则）或 "character"�
 只输出 JSON 数组，不要 markdown 代码块：
 [{"kind":"world","title":"不超过 14 字","content":"80–160 字"}]`
   return [
-    { role: 'system', content: planSystem(input.sceneId, input.genreId, '设计整本书的核心设定') },
+    { role: 'system', content: planSystem(input.sceneId, input.genreId, '设计整本书的核心设定', input.conventions) },
     { role: 'user', content: user }
   ]
 }
@@ -581,7 +592,7 @@ ${digest(input.settings) || '（尚未确定）'}
 只输出 JSON 数组，不要 markdown 代码块：
 [{"title":"第一卷 ×××","summary":"60–120 字"}]`
   return [
-    { role: 'system', content: planSystem(input.sceneId, input.genreId, '规划全书分卷结构') },
+    { role: 'system', content: planSystem(input.sceneId, input.genreId, '规划全书分卷结构', input.conventions) },
     { role: 'user', content: user }
   ]
 }
@@ -607,7 +618,7 @@ ${digest(input.settings) || '（尚未确定）'}
 只输出 JSON 数组，不要 markdown 代码块：
 [{"title":"第1章 ×××","summary":"30–60 字"}]`
   return [
-    { role: 'system', content: planSystem(input.sceneId, input.genreId, '写第一卷章纲') },
+    { role: 'system', content: planSystem(input.sceneId, input.genreId, '写第一卷章纲', input.conventions) },
     { role: 'user', content: user }
   ]
 }
@@ -617,7 +628,11 @@ ${digest(input.settings) || '（尚未确定）'}
  * 先把已定产物装配成临时 Project，复用 buildSystemPrompt / assembleContext
  * 那套上下文机制，保证设定与章纲都被注入。
  */
-export function firstChapterMessages(product: QuickStartProduct, library?: StyleLibrary | null): PromptMessage[] {
+export function firstChapterMessages(
+  product: QuickStartProduct,
+  library?: StyleLibrary | null,
+  conventions?: GenreConventionOverrides | null
+): PromptMessage[] {
   const project = assembleProject({ ...product, firstChapter: '' })
   const chapter = project.chapters[0] ?? null
   return buildDraftMessages(
@@ -628,7 +643,8 @@ export function firstChapterMessages(product: QuickStartProduct, library?: Style
       targetWords: product.perChapter,
       chapterTitle: chapter?.title
     },
-    library
+    library,
+    conventions
   )
 }
 

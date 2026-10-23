@@ -323,7 +323,14 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
 
   /* ───────────────────── 五个步骤的生成器 ───────────────────── */
 
-  const idea = { idea: form.idea.trim(), sceneId: form.sceneId, genreId: form.genreId }
+  // 带上设置里的题材公约：一键开书是「书还没建」的阶段，拿不到 project 上的设置，
+  // 只能从全局 config 取，否则开出来的书按内置公约定调、后续正文按自定义公约写，前后不一。
+  const idea = {
+    idea: form.idea.trim(),
+    sceneId: form.sceneId,
+    genreId: form.genreId,
+    conventions: config?.settings.genreConventions
+  }
 
   const runTitle = (): Promise<boolean> =>
     runStep(1, 'outline', () => titleMessages(idea), STEP_TOKENS.title, applyTitle)
@@ -356,7 +363,18 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
   })
 
   const runFirstChapter = (): Promise<boolean> =>
-    runStep(5, 'draft', () => firstChapterMessages(productNow(''), useApp.getState().styleLibrary), tokensForWords(form.perChapter), applyFirstChapter)
+    runStep(
+      5,
+      'draft',
+      () =>
+        firstChapterMessages(
+          productNow(''),
+          useApp.getState().styleLibrary,
+          useApp.getState().config?.settings.genreConventions
+        ),
+      tokensForWords(form.perChapter),
+      applyFirstChapter
+    )
 
   const runner = (step: number): Promise<boolean> => {
     switch (step) {

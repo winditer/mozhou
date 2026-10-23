@@ -1,5 +1,6 @@
 import type { Channel, Chapter, Project, TaskKind } from '@shared/types'
 import type { StyleLibrary } from '@shared/styleLibrary'
+import type { GenreConventionOverrides } from '@shared/genres'
 import { countWords, stripHtml, truncate } from '@shared/utils'
 import { sendChat } from './ai'
 import {
@@ -25,6 +26,12 @@ export interface GenParams {
    * 漏传一处就会退回到引用时的旧快照，写得跟别处不一样却查不出原因。
    */
   library?: StyleLibrary | null
+  /**
+   * 题材公约的全局覆盖表（设置 → 题材公约）。
+   * 同 library 一样挂在基类上：正文/改写/大纲/对话/一键开书任一漏传，
+   * 那一路就会用回内置公约，跟别处生成出来的东西不是一套规矩。
+   */
+  conventions?: GenreConventionOverrides | null
   onDelta: (d: string) => void
   /** 思考增量（reasoning_content 等），只用于进度展示，不属于正文 */
   onThought?: (d: string) => void
@@ -61,7 +68,8 @@ export async function generateDraft(p: DraftGenParams): Promise<string> {
       tailText: p.tailText,
       rewriteParagraph: p.rewriteParagraph
     },
-    p.library
+    p.library,
+    p.conventions
   )
   let text = ''
   p.onStage?.('正在生成…')
@@ -117,7 +125,14 @@ export async function generateDraft(p: DraftGenParams): Promise<string> {
 export async function generateSelection(
   p: GenParams & { selection: string; instruction: string }
 ): Promise<string> {
-  const messages = buildSelectionMessages(p.project, p.chapter, p.selection, p.instruction, p.library)
+  const messages = buildSelectionMessages(
+    p.project,
+    p.chapter,
+    p.selection,
+    p.instruction,
+    p.library,
+    p.conventions
+  )
   const r = await sendChat({
     channel: p.channel,
     model: p.model,
@@ -157,8 +172,11 @@ export async function generateChatReply(
   }
 ): Promise<string> {
   // 对话时必须能看到「当前这一章」的正文，否则模型只会拿到前文/设定
-  const ctx = assembleContext(p.project, p.chapter, 20000, { includeCurrent: true })
-  const system = `${buildSystemPrompt(p.project, 'prose', p.library)}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。`
+  const ctx = assembleContext(p.project, p.chapter, 20000, {
+    includeCurrent: true,
+    conventions: p.conventions
+  })
+  const system = `${buildSystemPrompt(p.project, 'prose', p.library, p.conventions)}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。`
   const ctxText = contextToText(ctx)
   const messages = [
     { role: 'system' as const, content: system },

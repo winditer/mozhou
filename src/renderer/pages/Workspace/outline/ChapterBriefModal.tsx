@@ -55,7 +55,12 @@ export function ChapterBriefModal({
     ].join('\n')
     void ai.run({
       task: 'outline',
-      messages: buildOutlineMessages(project, instruction, useApp.getState().styleLibrary),
+      messages: buildOutlineMessages(
+        project,
+        instruction,
+        useApp.getState().styleLibrary,
+        useApp.getState().config?.settings.genreConventions
+      ),
       // 提示词要求 150–260 字，按 420 字给正文预算 + 思考余量；
       // 之前这里预算偏紧时模型被截断，吐出来的就是半句话
       maxTokens: tokensForWords(420),

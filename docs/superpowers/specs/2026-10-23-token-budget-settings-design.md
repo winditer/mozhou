@@ -1,7 +1,7 @@
 # 输出预算（maxTokens）配置化设计
 
 日期：2026-10-23
-状态：待评审
+状态：已确认（2026-10-23）
 
 ## 背景
 
@@ -11,6 +11,26 @@
 - **固定**：15 处写死常数（600 / 700 / 900 / 1500 / 2000 / 2200 / 2600 / 3000 …）。
 
 动态项比源码里的 `tokensForWords` 调用点只多一个：`bible.entry` / `bible.entryShort` 同出自 `BibleAiModal.tsx:100` 的一个三元表达式，配置化后拆成两个独立键。
+
+### 这个预算管什么、不管什么
+
+配置项最终落到各协议的字段，语义统一为**输出侧上限**：
+
+| 协议 | 字段 | 位置 |
+| --- | --- | --- |
+| OpenAI-compatible | `max_tokens`，400 时重试 `max_completion_tokens` | 请求体顶层 |
+| Anthropic | `max_tokens`（必填） | 请求体顶层 |
+| Gemini | `maxOutputTokens` | `generationConfig` 内 |
+
+- **不含 prompt。** 输入 token 是独立维度，`maxTokens` 从不是「总预算」。三家协议均如此，无需额外处理。
+- **含思考过程（reasoning / thinking）。** 这是 `maxTokens` 的一个硬性约束，无法通过参数把思考排除在配额之外：
+  - OpenAI-compatible：`reasoning_tokens` 是 `completion_tokens` 的子集，计进 `max_tokens`；
+  - Anthropic：扩展思考的 `thinking_delta` 属 output block，占 `max_tokens`；
+  - Gemini：思考 token 走 `thoughtsTokenCount`，计入 `maxOutputTokens` 限额。
+
+  因此 `perWord` 预算用 `thinkPad` 额外预留思考余量，`maxTokens = 正文预算 + thinkPad`。思考余量**不做模型自动识别**，只作为用户可调的固定参数（默认 1024）。
+
+- **用量上报的口径差异**（不影响限额，但影响界面显示）：`gemini.ts` 目前只读 `candidatesTokenCount`，不含思考，故 `completionTokens` 偏低；OpenAI-compatible 的 `completion_tokens` 已含思考。本次不改上报逻辑，仅记录。
 
 问题有两个：
 
@@ -36,6 +56,9 @@
 | 默认值 | 逐一沿用当前硬编码值，零行为变化 |
 | 连通性测试 8 | 排除，保持硬编码 |
 | 设置页位置 | 新增独立 tab |
+| 思考余量 | 固定可调参数，不做推理模型自动识别 |
+| prompt 是否计入 | 不计入，无需处理 |
+| 思考是否计入 | 计入且无法排除，只能靠 `thinkPad` 留余量 |
 
 ## 方案
 

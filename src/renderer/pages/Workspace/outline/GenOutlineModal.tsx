@@ -81,7 +81,12 @@ export function GenOutlineModal({
     }
     setPhase('streaming')
     setStageNote('')
-    const messages = buildOutlineMessages(project, text, useApp.getState().styleLibrary)
+    const messages = buildOutlineMessages(
+      project,
+      text,
+      useApp.getState().styleLibrary,
+      useApp.getState().config?.settings.genreConventions
+    )
     const maxTokens = tokensForWords(3200) // 10 章大纲 + 思考模型的推理都吃 max_tokens，给足预算
     let result = await ai.run({ task: 'outline', messages, maxTokens, temperature: 0.75 })
     if (!result) {

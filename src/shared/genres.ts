@@ -2,7 +2,8 @@ import type { Genre } from './types'
 
 /**
  * 题材库：16 个常用题材。
- * convention 会作为「题材公约」注入提示词，用来约束 AI 不要写出世面上烂熟的俗套。
+ * convention 是内置的「题材公约」默认值，注入提示词前会先经过 resolveGenreConvention，
+ * 作者在「设置 → 题材公约」里改过的那条会覆盖它，用来约束 AI 不要写出世面上烂熟的俗套。
  * color 用于题材卡片标识，均在中浅色背景上可读。
  */
 export const GENRES: Genre[] = [
@@ -158,4 +159,40 @@ export const GENRE_MAP: Record<string, Genre> = Object.fromEntries(
 
 export function getGenre(id: string): Genre | undefined {
   return GENRE_MAP[id]
+}
+
+/* ───────────────────────── 题材公约：内置默认 + 全局覆盖 ───────────────────────── */
+
+/**
+ * 「设置 → 题材公约」里的覆盖表：只存被作者改过的那些题材。
+ *
+ * 存「覆盖」而不是存全量副本，理由和文风分身库的引用语义一致：
+ * 内置公约将来改进时，没动过手的题材要能跟着一起变；
+ * 一旦存全量，老用户的 16 条公约就被冻结在改版那天的样子了。
+ * 键是题材 id，值是作者写的公约正文（空串表示「恢复默认」，我们直接删键）。
+ */
+export type GenreConventionOverrides = Record<string, string>
+
+/**
+ * 解析书名下真正生效的题材公约。
+ *
+ * 优先级：作者覆盖 → 内置默认。两者都拿不到（未知题材 id）时返回空串，
+ * 调用方据此跳过注入，不要把「【题材】」后面跟一片空白送进提示词。
+ */
+export function resolveGenreConvention(
+  genreId: string | undefined | null,
+  overrides?: GenreConventionOverrides | null
+): string {
+  if (!genreId) return ''
+  const custom = overrides?.[genreId]?.trim()
+  if (custom) return custom
+  return GENRE_MAP[genreId]?.convention?.trim() ?? ''
+}
+
+/** 某个题材的公约是否被作者改过 */
+export function isConventionOverridden(
+  genreId: string,
+  overrides?: GenreConventionOverrides | null
+): boolean {
+  return Boolean(overrides?.[genreId]?.trim())
 }

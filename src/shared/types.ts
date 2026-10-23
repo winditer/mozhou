@@ -71,6 +71,11 @@ export interface AppSettings {
   temperature: number
   firstRunDone: boolean
   showWordCountBar: boolean
+  /**
+   * 题材公约的全局覆盖表：题材 id → 作者自定义的公约正文。
+   * 只存被改过的题材，未出现的题材继续沿用 shared/genres.ts 的内置默认值。
+   */
+  genreConventions: Record<string, string>
 }
 
 export interface Config {
@@ -120,7 +125,7 @@ export interface Genre {
   id: string
   name: string
   group: string
-  /** 题材公约：注入到提示词 */
+  /** 题材公约的内置默认值：注入提示词前可被设置里的全局覆盖替换 */
   convention: string
   toneHints: string[]
   color: string

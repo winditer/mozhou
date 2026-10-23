@@ -1,20 +1,22 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { Database, Fingerprint, Info, ListChecks, Palette, PenLine, Plug } from 'lucide-react'
+import { BookMarked, Database, Fingerprint, Info, ListChecks, Palette, PenLine, Plug } from 'lucide-react'
 import { AboutSection } from './AboutSection'
 import { AppearanceSection } from './AppearanceSection'
 import { ChannelsSection } from './ChannelsSection'
 import { DataSection } from './DataSection'
+import { GenresSection } from './GenresSection'
 import { PreferencesSection } from './PreferencesSection'
 import { StyleLibrarySection } from './StyleLibrary'
 import { TasksSection } from './TasksSection'
 
-type SectionId = 'channels' | 'tasks' | 'style' | 'appearance' | 'prefs' | 'data' | 'about'
+type SectionId = 'channels' | 'tasks' | 'style' | 'genres' | 'appearance' | 'prefs' | 'data' | 'about'
 
 const NAV: { id: SectionId; label: string; icon: LucideIcon }[] = [
   { id: 'channels', label: '渠道与模型', icon: Plug },
   { id: 'tasks', label: '任务分配', icon: ListChecks },
   { id: 'style', label: '文风分身库', icon: Fingerprint },
+  { id: 'genres', label: '题材公约', icon: BookMarked },
   { id: 'appearance', label: '外观与排版', icon: Palette },
   { id: 'prefs', label: '写作偏好', icon: PenLine },
   { id: 'data', label: '数据与备份', icon: Database },
@@ -23,6 +25,12 @@ const NAV: { id: SectionId; label: string; icon: LucideIcon }[] = [
 
 export function Settings(): ReactNode {
   const [active, setActive] = useState<SectionId>('channels')
+
+  // 二级导航是页面内 state，截图 / E2E 脚本无法点进「题材公约」这类子页。
+  // 挂一个只读的跳转钩子，功能和用户点导航完全一致，只是给自动化用的。
+  useEffect(() => {
+    ;(window as unknown as Record<string, unknown>).__MZ_SETTINGS = { go: (id: string) => setActive(id as SectionId) }
+  }, [])
 
   return (
     <div className="h-full flex" style={{ background: 'var(--bg)' }}>
@@ -70,6 +78,7 @@ export function Settings(): ReactNode {
           {active === 'channels' && <ChannelsSection />}
           {active === 'tasks' && <TasksSection />}
           {active === 'style' && <StyleLibrarySection />}
+          {active === 'genres' && <GenresSection />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'prefs' && <PreferencesSection />}
           {active === 'data' && <DataSection />}
