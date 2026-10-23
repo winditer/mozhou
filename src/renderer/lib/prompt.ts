@@ -1,4 +1,5 @@
 import type { Chapter, Project, PromptMessage } from '@shared/types'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget, type TokenBudgets } from '@shared/budgets'
 import { getScene } from '@shared/scenes'
 import { getGenre } from '@shared/genres'
 import { countWords, estimateTokens, stripHtml, truncate } from '@shared/utils'
@@ -345,18 +346,20 @@ export function buildOutlineMessages(project: Project, instruction: string): Pro
   ]
 }
 
-/** 生成用的 max_tokens 估算：中文 1 字≈2 token 预算更安全 */
 /**
- * 按目标字数给出输出预算。
+ * 按目标字数给出输出预算（兼容用：旧有的按字数估算入口）。
  *
- * 之前是 words*2.2 且下限 1024，对推理类模型偏低：思考过程也计入 max_tokens，
- * 预算被思考吃光后正文就是空的或半截。这里改为：
- * - 正文按 2.2 倍留（中文一字约 0.75–1.5 token，2.2 倍已有余量）；
- * - 再额外加 1024 给思考；
- * - 下限抬到 2048，宁多不少。
+ * 公式本身已经搬进 @shared/budgets 的 draft.generate 预算项：
+ * 正文按 2.2 倍留（中文一字约 0.75–1.5 token，2.2 倍已有余量），
+ * 再额外加 1024 给思考，最后夹到 [2048, 16000]。
+ * 加 1024 是因为思考过程也计入 max_tokens，预算被思考吃光后正文就是空的或半截。
+ *
+ * 保留这个函数是给还按「字数」思考的调用点用的：
+ * 不传 budgets 时走的正是默认值，结果与改造前逐字一致。
+ * 调用份额类的场景请直接用 resolveBudget + BUDGET_KEYS。
  */
-export function tokensForWords(words: number): number {
-  return Math.min(16000, Math.max(2048, Math.round(words * 2.2) + 1024))
+export function tokensForWords(words: number, budgets: TokenBudgets = DEFAULT_TOKEN_BUDGETS): number {
+  return resolveBudget(budgets, BUDGET_KEYS.draftGenerate, words)
 }
 
 export function countGenerated(text: string): number {
