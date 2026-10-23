@@ -1,38 +1,12 @@
 import { promises as fs } from 'node:fs'
 import { safeStorage } from 'electron'
-import type { AppSettings, Channel, Config, ModelEntry } from '@shared/types'
+import type { Channel, Config, ModelEntry } from '@shared/types'
 import { configFile, secretsFile } from '../paths'
 import { readJson, writeJsonAtomic } from './jsonStore'
+import { DEFAULT_SETTINGS, mergeSettings } from './mergeSettings'
 
-export const DEFAULT_SETTINGS: AppSettings = {
-  themeId: 'paper',
-  typography: {
-    fontFamily: '"Songti SC", "STSong", "Noto Serif SC", Georgia, serif',
-    fontSize: 17,
-    lineHeight: 1.9,
-    pageWidth: 760,
-    indent: true,
-    paragraphSpacing: 0.6,
-    dimUnfocused: false
-  },
-  typewriter: false,
-  focusMode: false,
-  shelfCoverSize: 'm',
-  dailyGoal: 3000,
-  taskModels: {
-    draft: null,
-    outline: null,
-    polish: null,
-    naming: null,
-    summary: null,
-    audit: null,
-    chat: null
-  },
-  lastProjectId: null,
-  temperature: 0.85,
-  firstRunDone: false,
-  showWordCountBar: true
-}
+/** 默认设置定义在 mergeSettings.ts（纯模块，便于单测），这里转出去保持既有引用 */
+export { DEFAULT_SETTINGS } from './mergeSettings'
 
 export const DEFAULT_CONFIG: Config = {
   version: 1,
@@ -47,14 +21,8 @@ export async function loadConfig(): Promise<Config> {
     version: raw.version ?? 1,
     channels: (raw.channels ?? []).map(normalizeChannel),
     models: (raw.models ?? []).map(normalizeModel),
-    settings: { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}), shelfCoverSize: normalizeCoverSize(raw.settings?.shelfCoverSize), typography: { ...DEFAULT_SETTINGS.typography, ...(raw.settings?.typography ?? {}) }, taskModels: { ...DEFAULT_SETTINGS.taskModels, ...(raw.settings?.taskModels ?? {}) } }
+    settings: mergeSettings(raw.settings)
   }
-}
-
-/** 老配置里可能存着已下线的 'sl' 档位，统一落到新的最小档 's' */
-function normalizeCoverSize(v: unknown): 's' | 'm' | 'l' {
-  if (v === 'l' || v === 'm' || v === 's') return v
-  return v === 'sl' ? 's' : 'm'
 }
 
 function normalizeChannel(c: Channel): Channel {

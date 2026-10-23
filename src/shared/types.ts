@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import type { TokenBudgets } from './budgets'
 
 /* ────────────────────────────── 渠道与模型 ────────────────────────────── */
 
@@ -67,6 +68,11 @@ export interface AppSettings {
   dailyGoal: number
   taskModels: Record<TaskKind, string | null>
   lastProjectId: string | null
+  /**
+   * 各调用点的输出预算（maxTokens），键见 shared/budgets.ts 的 BUDGET_KEYS。
+   * 老配置里没有这一项，读盘时由 mergeSettings 逐键补齐默认值。
+   */
+  tokenBudgets: TokenBudgets
   temperature: number
   firstRunDone: boolean
   showWordCountBar: boolean
