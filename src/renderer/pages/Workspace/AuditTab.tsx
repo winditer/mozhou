@@ -17,7 +17,7 @@ import { Button, EmptyState, Progress, Segmented, Select, Spinner } from '../../
 import { abortChat, sendChat } from '../../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../../lib/stream'
 import { buildSummaryMessages } from '../../lib/prompt'
-import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget, type TokenBudgets } from '@shared/budgets'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budgets'
 import { resolveTaskModel, taskModelLabel, useApp } from '../../store/app'
 import { IssueCard } from './audit/IssueCard'
 import { MarginNotes } from './audit/MarginNotes'
@@ -185,8 +185,7 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
   const [suggestions, setSuggestions] = useState<ThreadSuggestion[]>([])
   const [threadAt, setThreadAt] = useState(0)
 
-  /** 预算一律在发请求时从 store 现取：这几个 run* 都不是 useCallback，但读 state 能保证拿到最新配置 */
-  const budgets = (): TokenBudgets => useApp.getState().config?.settings.tokenBudgets ?? DEFAULT_TOKEN_BUDGETS
+  
 
   const abortedRef = useRef(false)
   /** 本次运行是否已经给过「已停止」提示，避免同名 info 弹两次 */
@@ -334,13 +333,15 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
 
         setRun({ running: true, stage: `摘要 ${i + 1}/${chapterCount} 章 · ${chapter.title}`, done: i, total })
         try {
+          // 预算在发请求时现取，保证拿到最新配置（run* 不是 useCallback，不能用组件作用域的旧值）
+          const budgets = useApp.getState().config?.settings.tokenBudgets ?? DEFAULT_TOKEN_BUDGETS
           const res = await sendChat({
             channel: (summaryPicked ?? picked).channel,
             model: (summaryPicked ?? picked).model,
             messages: buildSummaryMessages(live, chapter),
             task: 'summary',
             temperature: 0.3,
-            maxTokens: resolveBudget(budgets(), BUDGET_KEYS.summaryAudit),
+            maxTokens: resolveBudget(budgets, BUDGET_KEYS.summaryAudit),
             onDelta: sink.onDelta,
             onThought: sink.onThought
           })
@@ -374,13 +375,14 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
       if (!live) return
 
       sink.reset()
+      const budgets = useApp.getState().config?.settings.tokenBudgets ?? DEFAULT_TOKEN_BUDGETS
       const res = await sendChat({
         channel: picked.channel,
         model: picked.model,
         messages: buildBookAuditMessages(live, summaries),
         task: 'audit',
         temperature: 0.2,
-        maxTokens: resolveBudget(budgets(), BUDGET_KEYS.auditBook),
+        maxTokens: resolveBudget(budgets, BUDGET_KEYS.auditBook),
         onDelta: sink.onDelta,
         onThought: sink.onThought
       })
@@ -442,13 +444,14 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
 
     try {
       const sink = makeSink((text, thought) => setProgress({ text, thought }))
+      const budgets = useApp.getState().config?.settings.tokenBudgets ?? DEFAULT_TOKEN_BUDGETS
       const res = await sendChat({
         channel: picked.channel,
         model: picked.model,
         messages: buildChapterAuditMessages(live, chapter),
         task: 'audit',
         temperature: 0.25,
-        maxTokens: resolveBudget(budgets(), BUDGET_KEYS.auditChapter),
+        maxTokens: resolveBudget(budgets, BUDGET_KEYS.auditChapter),
         onDelta: sink.onDelta,
         onThought: sink.onThought
       })
@@ -503,13 +506,14 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
 
     try {
       const sink = makeSink((text, thought) => setProgress({ text, thought }))
+      const budgets = useApp.getState().config?.settings.tokenBudgets ?? DEFAULT_TOKEN_BUDGETS
       const res = await sendChat({
         channel: picked.channel,
         model: picked.model,
         messages: buildThreadHuntMessages(live, summaryMap(live)),
         task: 'audit',
         temperature: 0.35,
-        maxTokens: resolveBudget(budgets(), BUDGET_KEYS.auditThread),
+        maxTokens: resolveBudget(budgets, BUDGET_KEYS.auditThread),
         onDelta: sink.onDelta,
         onThought: sink.onThought
       })

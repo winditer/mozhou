@@ -98,7 +98,8 @@ export function BibleAiModal({
         { role: 'system', content: SYSTEM[kind] },
         { role: 'user', content: user }
       ],
-      // 角色 5 个约 900 字、世界观 6 条约 800 字，各自走自己的 key
+      // 人物与其他条目各走自己的键。900 / 800 是从旧 tokensForWords 的字数入参原样搬来的
+      // （perWord 下约合 3004 / 2784 token），不是「让模型写 900 字」的意思——别照着这个数往下调。
       maxTokens: resolveBudget(
         budgets,
         kind === 'characters' ? BUDGET_KEYS.bibleEntry : BUDGET_KEYS.bibleEntryShort,
