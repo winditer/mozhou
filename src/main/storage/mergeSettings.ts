@@ -9,7 +9,13 @@
  * 这个文件只能引 @shared/*，不许碰 electron、react 和 node 内置模块。
  */
 import type { AppSettings } from '@shared/types'
-import { DEFAULT_TOKEN_BUDGETS, clampBudget, type BudgetKey, type TokenBudget } from '@shared/budgets'
+import {
+  DEFAULT_TOKEN_BUDGETS,
+  clampBudget,
+  type BudgetKey,
+  type TokenBudget,
+  type TokenBudgets
+} from '@shared/budgets'
 
 /** 出厂默认设置。与改造前的硬编码值逐项对齐，零行为变化。 */
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -75,13 +81,18 @@ function isWellFormed(budget: unknown): budget is TokenBudget {
  * - 缺的 key 用默认值，老配置（压根没有 tokenBudgets）也能一次补齐；
  * - 用户表里多出来的未知 key 不会漏进结果；
  * - 结构对但数值越界的只夹取、保留用户的意图；结构坏的才回默认。
+ *
+ * 每个条目都必须新建对象，不能直接引用 DEFAULT_TOKEN_BUDGETS[key]：
+ * 那是个共享的进程级常量，调用方只要就地改一次（budget.tokens = 5），
+ * 默认表就被永久改坏，之后所有 mergeSettings 都拿到污染后的值。
+ * 走默认分支时用 spread 复制——TokenBudget 的字段全是原始值，浅拷贝即够深。
  */
 function mergeTokenBudgets(raw: unknown): AppSettings['tokenBudgets'] {
   const src = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>
-  const out = { ...DEFAULT_TOKEN_BUDGETS }
+  const out = {} as TokenBudgets
   for (const key of Object.keys(DEFAULT_TOKEN_BUDGETS) as BudgetKey[]) {
     const v = src[key]
-    if (isWellFormed(v)) out[key] = clampBudget(v)
+    out[key] = isWellFormed(v) ? clampBudget(v) : { ...DEFAULT_TOKEN_BUDGETS[key] }
   }
   return out
 }
@@ -95,7 +106,7 @@ function mergeTokenBudgets(raw: unknown): AppSettings['tokenBudgets'] {
  * - tokenBudgets 逐键补齐，规则见 mergeTokenBudgets。
  *
  * 返回的 typography / taskModels / tokenBudgets 都是新对象，
- * 调用方改了不会污染 DEFAULT_SETTINGS。
+ * 连 tokenBudgets 里每个条目也是新对象，调用方就地改也不会污染 DEFAULT_SETTINGS。
  */
 export function mergeSettings(raw: Partial<AppSettings> | undefined): AppSettings {
   const r = raw ?? {}

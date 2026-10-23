@@ -194,6 +194,46 @@ console.log('脏键与副作用')
   // 也不能直接引用默认表，否则改一份设置会污染全局默认
   check('预算表不是默认表的同一个对象', mergeSettings({}).tokenBudgets !== DEFAULT_SETTINGS.tokenBudgets)
   check('排版不是默认表的同一个对象', mergeSettings({}).typography !== DEFAULT_SETTINGS.typography)
+
+  /* 只查「容器不是同一个对象」是不够的：上面那条用的是整体赋值 a.tokenBudgets[k] = {...}，
+     浅拷贝也能过。真正的坑是默认分支把 DEFAULT_TOKEN_BUDGETS[key] 的引用直接塞进结果，
+     调用方就地改一个字段（budget.tokens = 5）就会把进程级默认表永久改坏，
+     之后每次 mergeSettings 都读到污染值。所以必须就地改嵌套字段来验。 */
+  const polluted = mergeSettings({})
+  const beforeDefault = JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['audit.book'])
+  const beforePerWord = JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['draft.generate'])
+
+  polluted.tokenBudgets['audit.book'].tokens = 5
+  polluted.tokenBudgets['draft.generate'].perWord = 99
+
+  check('就地改嵌套字段不污染默认表(fixed)',
+    JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['audit.book']) === beforeDefault,
+    JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['audit.book']))
+  check('就地改嵌套字段不污染默认表(perWord)',
+    JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['draft.generate']) === beforePerWord,
+    JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['draft.generate']))
+  check('污染后再次 mergeSettings 仍得默认值',
+    mergeSettings({}).tokenBudgets['audit.book'].tokens === 2600,
+    mergeSettings({}).tokenBudgets['audit.book'].tokens)
+  check('污染后 perWord 预设仍是 2.2',
+    mergeSettings({}).tokenBudgets['draft.generate'].perWord === 2.2,
+    mergeSettings({}).tokenBudgets['draft.generate'].perWord)
+
+  // 结构坏的条目走的是同一条默认分支，也必须给新对象
+  const malformed = mergeSettings({ tokenBudgets: { 'audit.book': 'garbage' } })
+  malformed.tokenBudgets['audit.book'].tokens = 7
+  check('坏数据回落的对象也不与默认表同引用',
+    DEFAULT_SETTINGS.tokenBudgets['audit.book'].tokens === 2600,
+    JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['audit.book']))
+
+  const fresh = mergeSettings({})
+  check('返回的预算对象不与默认表同一引用',
+    Object.keys(DEFAULT_SETTINGS.tokenBudgets).every(
+      (k) => fresh.tokenBudgets[k] !== DEFAULT_SETTINGS.tokenBudgets[k]
+    ),
+    Object.keys(DEFAULT_SETTINGS.tokenBudgets)
+      .filter((k) => fresh.tokenBudgets[k] === DEFAULT_SETTINGS.tokenBudgets[k])
+      .join('|'))
 }
 
 /* ── 7. 原有深合并行为一点没变：排版 / 任务模型 / 封面档位 ── */
