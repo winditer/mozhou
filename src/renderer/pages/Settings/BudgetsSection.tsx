@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { AlertTriangle, RotateCcw } from 'lucide-react'
 import {
   BUDGET_KEYS,
@@ -185,6 +185,9 @@ const GROUPS: GroupDef[] = [
 /** 设置页里各数字框的目标尺寸 */
 const NUM_W = 78
 
+/** 按字数预算里四个可调字段 */
+type Field = Exclude<keyof PerWordBudget, 'kind'>
+
 /* ───────────────────────── 工具函数 ───────────────────────── */
 
 /**
@@ -205,9 +208,21 @@ function wantedFor(words: number, b: PerWordBudget): number {
   return Math.round(words * b.perWord) + b.thinkPad
 }
 
-/** 按 2.2 粗估能写多少汉字；算式与 5 个 perWord 调用点传的字数口径一致 */
-function charsHint(tokens: number): string {
-  return `≈ ${Math.max(1, Math.round(tokens / 2.2))} 汉字`
+/**
+ * 写入时的合并基准：从 store 现读，不要用渲染时闭包里的那份。
+ * patchSettings 是异步往返，两次快速改动之间 config 还是旧的，
+ * 闭包快照会让后一次写入静默冲掉前一次的改动。
+ */
+function liveBudgets(): TokenBudgets {
+  return useApp.getState().config?.settings.tokenBudgets ?? DEFAULT_TOKEN_BUDGETS
+}
+
+/**
+ * 固定额度行：没有任何 offset，按 2.2 token/字 反推能写多少汉字。
+ * 这是上界——真实中文正文按模型不同常是 1.5–2 token/字，所以只配「≈」和「粗估」。
+ */
+function fixedCharsHint(tokens: number): string {
+  return `≈ ${Math.max(1, Math.round(tokens / 2.2))} 汉字（粗估）`
 }
 
 /* ───────────────────────── 页面 ───────────────────────── */
@@ -221,10 +236,15 @@ export function BudgetsSection(): ReactNode {
   /**
    * 唯一的写入路径：先过 clampBudget 再落盘。
    * 成功不弹提示——数字框是边打边存的，每敲一下弹一次会很烦；失败由 patchSettingsSafe 报错。
+   *
+   * 合并基准必须现取，不能用渲染时闭包里的 budgets：patchSettings 是异步往返，
+   * config 要等 saveConfig resolve 后才更新。改了 A 行、还没落盘就去改 B 行时，
+   * 两次写入会各自基于同一份旧快照合并，后到的那次把 A 的改动整行冲掉——
+   * 不报错、不弹提示，纯静默丢失。这里改成从 store 现读，与 AuditTab 的做法一致。
    */
   function write(key: BudgetKey, next: TokenBudget): void {
-    const merged: TokenBudgets = { ...budgets, [key]: clampBudget(next) }
-    void patchSettingsSafe({ tokenBudgets: merged })
+    const cur = liveBudgets()
+    void patchSettingsSafe({ tokenBudgets: { ...cur, [key]: clampBudget(next) } })
   }
 
   /** 逐字段与默认值比较。不用 JSON.stringify：字段顺序一变（比如存盘归一化过）就会误判 */
@@ -242,8 +262,9 @@ export function BudgetsSection(): ReactNode {
   const allDefault = (Object.keys(DEFAULT_TOKEN_BUDGETS) as BudgetKey[]).every(isDefault)
 
   async function resetOne(key: BudgetKey, label: string): Promise<void> {
-    const merged: TokenBudgets = { ...budgets, [key]: clampBudget(DEFAULT_TOKEN_BUDGETS[key]) }
-    const ok = await patchSettingsSafe({ tokenBudgets: merged })
+    // 同样现取：恢复默认也是对一行的部分更新，不能拿渲染时的快照去覆盖别人的改动
+    const cur = liveBudgets()
+    const ok = await patchSettingsSafe({ tokenBudgets: { ...cur, [key]: clampBudget(DEFAULT_TOKEN_BUDGETS[key]) } })
     if (ok) useApp.getState().toast(`「${label}」已恢复默认`, 'ok')
   }
 
@@ -355,9 +376,17 @@ function BudgetRow({
         control={
           <>
             {shown.kind === 'perWord' ? (
-              <PerWordInputs value={shown} onWrite={(next) => onWrite(clampBudget(next))} />
+              <PerWordInputs
+                label={row.label}
+                value={shown}
+                onWrite={(next) => onWrite(clampBudget(next))}
+              />
             ) : (
-              <FixedInput value={shown.tokens} onWrite={(tokens) => onWrite({ kind: 'fixed', tokens })} />
+              <FixedInput
+                label={row.label}
+                value={shown.tokens}
+                onWrite={(tokens) => onWrite({ kind: 'fixed', tokens })}
+              />
             )}
             <IconButton
               onClick={onReset}
@@ -378,11 +407,23 @@ function BudgetRow({
 
 /* ───────────────────────── 固定额度 ───────────────────────── */
 
-function FixedInput({ value, onWrite }: { value: number; onWrite: (tokens: number) => void }): ReactNode {
+/**
+ * 固定额度没有思考余量，按 2.2 token/字 反推的汉字数是上界；
+ * 15 行的 aria-label 必须带行名，否则读屏用户分不清是哪一个额度。
+ */
+function FixedInput({
+  label,
+  value,
+  onWrite
+}: {
+  label: string
+  value: number
+  onWrite: (tokens: number) => void
+}): ReactNode {
   return (
     <div className="flex items-center gap-1.5 text-[11.5px]" style={{ color: 'var(--text-faint)' }}>
       <span className="chip" style={{ height: 18 }}>
-        {charsHint(value)}
+        {fixedCharsHint(value)}
       </span>
       <Input
         type="number"
@@ -392,7 +433,7 @@ function FixedInput({ value, onWrite }: { value: number; onWrite: (tokens: numbe
         value={String(value)}
         onChange={(e) => onWrite(numOr(e.target.value, value))}
         style={{ width: NUM_W, textAlign: 'right' }}
-        aria-label="输出 token 上限"
+        aria-label={`${label} 输出 token 上限`}
       />
       <span>token</span>
     </div>
@@ -401,54 +442,90 @@ function FixedInput({ value, onWrite }: { value: number; onWrite: (tokens: numbe
 
 /* ───────────────────────── 按字数 ───────────────────────── */
 
+/**
+ * 按字数那四个框：每字倍数 / 思考余量 / 下限 / 上限，边打边存。
+ *
+ * 下限填得比上限大时，clampBudget 在写盘时会把两者对调（`min: min(a,b), max: max(a,b)`），
+ * 这是有意的兜底，不会报错。所以「填反了」这个状态只存在于用户正在输入的原始串里，
+ * 落盘后的值永远已经对调过——提示必须挂在原始输入上，挂在 value 上永远不会触发。
+ */
 function PerWordInputs({
+  label,
   value,
   onWrite
 }: {
+  label: string
   value: PerWordBudget
   onWrite: (next: PerWordBudget) => void
 }): ReactNode {
+  /**
+   * 原始输入串：空串和「填到一半」的值（如刚删掉一个 0）不能直接 round 回写，
+   * 否则光标位置和输入过程都会被搅乱。草稿只活在输入框里，落盘仍按 spec 边打边存。
+   */
+  const [draft, setDraft] = useState<Partial<Record<Field, string>>>({})
+
   /** 只换一个字段，其余保持当前值；min/max 填反由 clampBudget 换回来 */
-  const patch = (field: keyof Omit<PerWordBudget, 'kind'>, raw: string): void =>
+  const patch = (field: Field, raw: string): void => {
+    setDraft((d) => ({ ...d, [field]: raw }))
     onWrite({ ...value, [field]: numOr(raw, value[field]) })
+  }
+
+  /**
+   * 填反检测只能看原始输入：clampBudget 在渲染前就把 min/max 换回来了，
+   * 等值到了 value 上永远是 min <= max。留空的字段按当前值算（numOr 也这么处理）。
+   */
+  const rawOf = (field: Field): number => numOr(draft[field] ?? String(value[field]), value[field])
+  const inverted = rawOf('min') > rawOf('max')
 
   const field = (
-    label: string,
-    key: keyof Omit<PerWordBudget, 'kind'>,
+    text: string,
+    key: Field,
     extra: { step: number; min: number; max: number }
   ): ReactNode => (
     <label className="flex flex-col gap-0.5">
       <span className="text-[10.5px]" style={{ color: 'var(--text-faint)' }}>
-        {label}
+        {text}
       </span>
       <Input
         type="number"
         min={extra.min}
         max={extra.max}
         step={extra.step}
-        value={String(value[key])}
+        value={draft[key] ?? String(value[key])}
         onChange={(e) => patch(key, e.target.value)}
         style={{ width: NUM_W, textAlign: 'right' }}
-        aria-label={label}
+        aria-label={`${label} ${text}`}
       />
     </label>
   )
 
   return (
-    <div className="flex items-end gap-2">
-      {field('每字倍数', 'perWord', { step: 0.1, min: 0.5, max: 8 })}
-      {field('思考余量', 'thinkPad', { step: 64, min: 0, max: 16384 })}
-      {field('下限', 'min', { step: 100, min: 1, max: 32768 })}
-      {field('上限', 'max', { step: 500, min: 1, max: 32768 })}
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-end gap-2">
+        {field('每字倍数', 'perWord', { step: 0.1, min: 0.5, max: 8 })}
+        {field('思考余量', 'thinkPad', { step: 64, min: 0, max: 16384 })}
+        {field('下限', 'min', { step: 100, min: 1, max: 32768 })}
+        {field('上限', 'max', { step: 500, min: 1, max: 32768 })}
+      </div>
+      {inverted && (
+        <span className="text-[10.5px]" style={{ color: 'var(--warn)' }}>
+          下限大于上限，保存时已自动对调。
+        </span>
+      )}
     </div>
   )
 }
 
-/** 按字数那几行底下的小字：公式、两个字数档的实际结果、以及用户填反时的即时提示 */
+/**
+ * 按字数那几行底下的小字：公式 + 两个字数档的实际结果。
+ *
+ * 这里只做正向计算（字数 → token），不再反推「≈ N 汉字」：
+ * 预算里那 1024 的思考余量不属于正文，拿 token 除以每字倍数会把它算进字数，
+ * 1000 字档会虚报 +46.5%。要反推就得先减掉 thinkPad，而正向这几档已经是答案。
+ */
 function PerWordHints({ value }: { value: PerWordBudget }): ReactNode {
   // 带上两个具体档位，让公式不只是文字：写起来才知道「每字倍数」到底改变什么
   const samples = [1000, 4000]
-  const inverted = value.min > value.max
 
   return (
     <div className="mt-1.5 text-[11.5px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
@@ -464,7 +541,6 @@ function PerWordHints({ value }: { value: PerWordBudget }): ReactNode {
         </span>
       ))}
       {' '}token。
-      {inverted && <span style={{ color: 'var(--warn)' }}> 下限大于上限，保存时已自动对调。</span>}
     </div>
   )
 }

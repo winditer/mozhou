@@ -120,12 +120,18 @@ export function PageHead({ title, desc, right }: { title: string; desc?: string;
   )
 }
 
-/** 一行「标题 + 说明 + 右侧控件」 */
+/**
+ * 一行「标题 + 说明 + 右侧控件」。
+ *
+ * 标题一律渲染成 <div>：以前有个 htmlForId 会渲染成 <label htmlFor>，但从未有调用点传过它，
+ * 而且它的取值必须是点得中的表单控件 id——现在的控件（Switch / Slider / Button / 嵌套的
+ * 四个数字框）都没有单一目标，硬套只会在个别行出现「点了标题没有反应」。读屏用户靠控件
+ * 自己的 aria-label 识别，所以这里不提供 label 关联。
+ */
 export function Row({
   title,
   desc,
   control,
-  htmlForId,
   tag,
   note,
   below,
@@ -135,7 +141,6 @@ export function Row({
   title: string
   desc?: string
   control: ReactNode
-  htmlForId?: string
   /** 标题后的短标签（如「按字数」「固定额度」） */
   tag?: ReactNode
   /** 说明下方的补充提示，用于需要注意的例外情况 */
@@ -158,9 +163,7 @@ export function Row({
             {tag}
           </div>
         ) : (
-          <label htmlFor={htmlForId} className="text-[13px]">
-            {title}
-          </label>
+          <div className="text-[13px]">{title}</div>
         )}
         {desc && (
           <div className="mt-0.5 text-[11.5px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
