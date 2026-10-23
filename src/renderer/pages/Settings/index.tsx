@@ -1,18 +1,20 @@
 import { useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { Database, Info, ListChecks, Palette, PenLine, Plug } from 'lucide-react'
+import { Database, Gauge, Info, ListChecks, Palette, PenLine, Plug } from 'lucide-react'
 import { AboutSection } from './AboutSection'
+import { BudgetsSection } from './BudgetsSection'
 import { AppearanceSection } from './AppearanceSection'
 import { ChannelsSection } from './ChannelsSection'
 import { DataSection } from './DataSection'
 import { PreferencesSection } from './PreferencesSection'
 import { TasksSection } from './TasksSection'
 
-type SectionId = 'channels' | 'tasks' | 'appearance' | 'prefs' | 'data' | 'about'
+type SectionId = 'channels' | 'tasks' | 'budgets' | 'appearance' | 'prefs' | 'data' | 'about'
 
 const NAV: { id: SectionId; label: string; icon: LucideIcon }[] = [
   { id: 'channels', label: '渠道与模型', icon: Plug },
   { id: 'tasks', label: '任务分配', icon: ListChecks },
+  { id: 'budgets', label: '输出预算', icon: Gauge },
   { id: 'appearance', label: '外观与排版', icon: Palette },
   { id: 'prefs', label: '写作偏好', icon: PenLine },
   { id: 'data', label: '数据与备份', icon: Database },
@@ -67,6 +69,7 @@ export function Settings(): ReactNode {
         <div className="mx-auto w-full" style={{ maxWidth: 860, padding: '22px 26px 72px' }}>
           {active === 'channels' && <ChannelsSection />}
           {active === 'tasks' && <TasksSection />}
+          {active === 'budgets' && <BudgetsSection />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'prefs' && <PreferencesSection />}
           {active === 'data' && <DataSection />}
