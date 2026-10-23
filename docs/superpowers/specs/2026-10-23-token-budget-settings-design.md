@@ -1,7 +1,7 @@
 # 输出预算（maxTokens）配置化设计
 
 日期：2026-10-23
-状态：待评审
+状态：已确认（2026-10-23）
 
 ## 背景
 
@@ -104,7 +104,7 @@ export function resolveBudget(budgets: TokenBudgets, key: BudgetKey, targetWords
 - `perWord` → `clamp(round(targetWords * perWord) + thinkPad, min, max)`
 - `perWord` 但 `targetWords` 缺失 → 以 `min` 兜底
 
-`tokensForWords` 保留为薄封装，内部用当前默认参数构造 `perWord` 预算，保证既有调用点不传设置时行为不变。
+`tokensForWords` 最终**整体删除**（实现阶段调整）：它把 `draft.generate` 这个键写死给了所有调用方，而其余调用方语义上分属设定卡 / 大纲 / 开书。由于 8 个 perWord 键当前参数完全相同，取错键在数值上不可见，一旦用户单独调整某个键才会暴露。故 Task 4 把全部调用点直接改用 `resolveBudget(budgets, BUDGET_KEYS.<自己的键>, 字数)`，函数本身不再保留。
 
 注意区分两种下限，实现时不要合并：
 
@@ -148,7 +148,9 @@ export function resolveBudget(budgets: TokenBudgets, key: BudgetKey, targetWords
 ### 持久化与迁移
 
 - [config.ts](../../../src/main/storage/config.ts) 的 `DEFAULT_SETTINGS` 增加 `tokenBudgets`。
-- `loadConfig` 的合并逻辑增加一层 `tokenBudgets: { ...DEFAULT.tokenBudgets, ...(raw.settings?.tokenBudgets ?? {}) }`，老配置自动补齐缺失键。
+- 老配置自动补齐缺失键。实现阶段改为：合并逻辑抽到 `src/main/storage/mergeSettings.ts`，由 `mergeSettings(raw)` 逐键校验——**结构损坏**（非对象、`kind` 不合法、缺字段）回落该键默认值，**数值越界**只走 `clampBudget` 收敛。
+  - 此处不用朴素的 `{ ...DEFAULT.tokenBudgets, ...raw }`：那样坏条目会直接进 `clampBudget`，被静默压成 `tokens: 1`（Task 1 审查实测），所以必须先做形状校验。
+  - `mergeSettings` 还为每个键产出独立对象，避免与默认表共享引用导致就地污染。
 - 不做 `version` 升级：缺失键由深合并补齐，且新旧结构互不冲突。
 
 ### 校验

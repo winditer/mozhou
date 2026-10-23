@@ -185,8 +185,6 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
   const [suggestions, setSuggestions] = useState<ThreadSuggestion[]>([])
   const [threadAt, setThreadAt] = useState(0)
 
-  
-
   const abortedRef = useRef(false)
   /** 本次运行是否已经给过「已停止」提示，避免同名 info 弹两次 */
   const abortNotifiedRef = useRef(false)
