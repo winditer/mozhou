@@ -1,5 +1,4 @@
 import type { Chapter, Project, PromptMessage } from '@shared/types'
-import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget, type TokenBudgets } from '@shared/budgets'
 import { getScene } from '@shared/scenes'
 import { getGenre } from '@shared/genres'
 import { countWords, estimateTokens, stripHtml, truncate } from '@shared/utils'
@@ -344,22 +343,6 @@ export function buildOutlineMessages(project: Project, instruction: string): Pro
       content: `${contextToText(ctx) ? `【作品资料】\n${contextToText(ctx)}\n\n` : ''}【任务】${instruction}\n\n请只输出大纲，格式为纯文本列表，每行一个节点，用「卷」和「章」两级缩进表示层级。任务里要求的章节数必须写满，不要用「略」「同上」「其余类似」省略任何一章。`
     }
   ]
-}
-
-/**
- * 按目标字数给出输出预算（兼容用：旧有的按字数估算入口）。
- *
- * 公式本身已经搬进 @shared/budgets 的 draft.generate 预算项：
- * 正文按 2.2 倍留（中文一字约 0.75–1.5 token，2.2 倍已有余量），
- * 再额外加 1024 给思考，最后夹到 [2048, 16000]。
- * 加 1024 是因为思考过程也计入 max_tokens，预算被思考吃光后正文就是空的或半截。
- *
- * 保留这个函数是给还按「字数」思考的调用点用的：
- * 不传 budgets 时走的正是默认值，结果与改造前逐字一致。
- * 调用份额类的场景请直接用 resolveBudget + BUDGET_KEYS。
- */
-export function tokensForWords(words: number, budgets: TokenBudgets = DEFAULT_TOKEN_BUDGETS): number {
-  return resolveBudget(budgets, BUDGET_KEYS.draftGenerate, words)
 }
 
 export function countGenerated(text: string): number {

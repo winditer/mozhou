@@ -3,7 +3,7 @@ import { CircleStop, Sparkles, Trash } from 'lucide-react'
 import type { Character, Project, WorldCategory, WorldEntry } from '@shared/types'
 import { WORLD_CATEGORY_LABELS } from '@shared/types'
 import { Button, Field, Input, Modal, Segmented, Select, Textarea } from '../../../components/ui'
-import { tokensForWords } from '../../../lib/prompt'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budgets'
 import { taskModelLabel, useApp } from '../../../store/app'
 import { useAiText } from '../useAiText'
 import { bibleDigest, parseCharacters, parseWorld } from './parse'
@@ -45,6 +45,7 @@ export function BibleAiModal({
   onClose: () => void
 }): ReactNode {
   const config = useApp((s) => s.config)
+  const budgets = useApp((s) => s.config?.settings.tokenBudgets) ?? DEFAULT_TOKEN_BUDGETS
   const toast = useApp((s) => s.toast)
   const patchProject = useApp((s) => s.patchProject)
 
@@ -97,7 +98,12 @@ export function BibleAiModal({
         { role: 'system', content: SYSTEM[kind] },
         { role: 'user', content: user }
       ],
-      maxTokens: tokensForWords(kind === 'characters' ? 900 : 800),
+      // 角色 5 个约 900 字、世界观 6 条约 800 字，各自走自己的 key
+      maxTokens: resolveBudget(
+        budgets,
+        kind === 'characters' ? BUDGET_KEYS.bibleEntry : BUDGET_KEYS.bibleEntryShort,
+        kind === 'characters' ? 900 : 800
+      ),
       temperature: 0.85
     })
     if (!result) {

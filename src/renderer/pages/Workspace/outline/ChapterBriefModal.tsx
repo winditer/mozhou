@@ -2,7 +2,8 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { CircleStop, Sparkles } from 'lucide-react'
 import type { OutlineNode, Project } from '@shared/types'
 import { Button, Modal, Textarea } from '../../../components/ui'
-import { buildOutlineMessages, tokensForWords } from '../../../lib/prompt'
+import { buildOutlineMessages } from '../../../lib/prompt'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budgets'
 import { useApp } from '../../../store/app'
 import { useAiText } from '../useAiText'
 
@@ -42,6 +43,7 @@ export function ChapterBriefModal({
   onClose: () => void
 }): ReactNode {
   const patchProject = useApp((s) => s.patchProject)
+  const budgets = useApp((s) => s.config?.settings.tokenBudgets) ?? DEFAULT_TOKEN_BUDGETS
   const toast = useApp((s) => s.toast)
   const ai = useAiText()
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -58,7 +60,7 @@ export function ChapterBriefModal({
       messages: buildOutlineMessages(project, instruction),
       // 提示词要求 150–260 字，按 420 字给正文预算 + 思考余量；
       // 之前这里预算偏紧时模型被截断，吐出来的就是半句话
-      maxTokens: tokensForWords(420),
+      maxTokens: resolveBudget(budgets, BUDGET_KEYS.outlineChapterBrief, 420),
       temperature: 0.7
     })
   }

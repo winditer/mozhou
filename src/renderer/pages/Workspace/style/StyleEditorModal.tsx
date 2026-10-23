@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Project, StyleProfile } from '@shared/types'
 import { countWords, uid } from '@shared/utils'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budgets'
 import { abortChat, sendChat } from '../../../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../../../lib/stream'
 import { resolveTaskModel, useApp } from '../../../store/app'
@@ -42,6 +43,7 @@ export function StyleEditorModal({
   onClose: () => void
 }): ReactNode {
   const { config, patchProject, toast } = useApp()
+  const budgets = useApp((s) => s.config?.settings.tokenBudgets) ?? DEFAULT_TOKEN_BUDGETS
   const [step, setStep] = useState<Step>(initialStep)
   const [name, setName] = useState('')
   const [samples, setSamples] = useState<string[]>([''])
@@ -133,7 +135,7 @@ export function StyleEditorModal({
         messages: buildTraitMessages(samples),
         task: 'polish',
         temperature: 0.35,
-        maxTokens: 700,
+        maxTokens: resolveBudget(budgets, BUDGET_KEYS.styleTraits),
         onDelta: (d) => {
           if (!aliveRef.current || stoppedRef.current) return
           text += d
