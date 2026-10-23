@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { PromptMessage, Project } from '@shared/types'
 import { countWords } from '@shared/utils'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budgets'
 import { abortChat, sendChat } from '../../../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../../../lib/stream'
 import { resolveTaskModel, useApp } from '../../../store/app'
@@ -84,6 +85,7 @@ export function TrialCompare({
   traits: string[]
 }): ReactNode {
   const { config, toast } = useApp()
+  const budgets = useApp((s) => s.config?.settings.tokenBudgets) ?? DEFAULT_TOKEN_BUDGETS
   const [seed, setSeed] = useState(() => seedFromProject(project))
   const [left, setLeft] = useState('')
   const [right, setRight] = useState('')
@@ -152,7 +154,7 @@ export function TrialCompare({
         messages,
         task: 'draft',
         temperature: 0.85,
-        maxTokens: 600,
+        maxTokens: resolveBudget(budgets, BUDGET_KEYS.styleTrial),
         onDelta: (d) => {
           if (!aliveRef.current) return
           push(d)

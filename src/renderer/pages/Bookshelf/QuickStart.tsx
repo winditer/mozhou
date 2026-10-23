@@ -13,7 +13,7 @@ import { SCENES, getScene } from '@shared/scenes'
 import { clamp, countWords, estimateTokens, uid } from '@shared/utils'
 import { abortChat, sendChat } from '../../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../../lib/stream'
-import { tokensForWords } from '../../lib/prompt'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget, type BudgetKey } from '@shared/budgets'
 import { resolveTaskModel, useApp } from '../../store/app'
 import { Button, Field, Input, Modal, Select, Spinner, Textarea } from '../../components/ui'
 import {
@@ -47,20 +47,6 @@ import {
   looksSubstantial,
   looksLikeTitle
 } from './quickstart/pipeline'
-
-/**
- * 每步的输出预算。
- *
- * 这里必须留足余量：推理类模型（deepseek-reasoner、o 系列等）的思考过程
- * **也计入 max_tokens**，思考把预算吃光时正文就是空字符串。早先设定卡 2600、
- * 章纲卡 2200，正是「解析失败 / 一片空白」的主因。
- */
-const STEP_TOKENS = {
-  title: 1200,
-  settings: 6000,
-  volumes: 3000,
-  chapters: 6000
-} as const
 
 /** 五步的初始状态 */
 const INITIAL_STATUS: Record<number, StepStatus> = { 1: 'pending', 2: 'pending', 3: 'pending', 4: 'pending', 5: 'pending' }
@@ -170,15 +156,30 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
 
   /* ───────────────────── 通用：跑一步 ───────────────────── */
 
+  /**
+   * 每步的输出预算由设置里各组预算决定（书名/设定/分卷/章纲/首章各一个 key），
+   * 不再写死数字。
+   *
+   * 配置里那条经验仍然成立：推理类模型（deepseek-reasoner、o 系列等）的思考过程
+   * **也计入 max_tokens**，思考把预算吃光时正文就是空字符串。早先设定卡 2600、
+   * 章纲卡 2200，正是「解析失败 / 一片空白」的主因。所以调低这几项前先确认模型不推理，
+   * 按字数估算的那些 key 也已经含 thinkPad 余量。
+   *
+   * 目标字数一律由调用方传进来，不在这个 useCallback 里读 form：它的依赖数组里没有
+   * form / config，直接读会拿到旧值（改完「每章字数」再跑第 5 步，预算仍按老数字算）。
+   * 调用点是每次渲染重建的，从那里传入永远是最新的。
+   */
   const runStep = useCallback(
     async (
       step: number,
       task: TaskKind,
       build: () => PromptMessage[],
-      maxTokens: number,
-      apply: (text: string) => boolean
+      budgetKey: BudgetKey,
+      apply: (text: string) => boolean,
+      targetWords?: number
     ): Promise<boolean> => {
       const picked = resolveTaskModel(useApp.getState().config, null, task)
+      const budgets = useApp.getState().config?.settings.tokenBudgets ?? DEFAULT_TOKEN_BUDGETS
       if (!picked) {
         useApp.getState().toast('请先到「设置 → 渠道与模型」配置一个可用模型', 'error')
         return false
@@ -202,7 +203,8 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
           messages,
           task,
           temperature: task === 'draft' ? 0.86 : 0.78,
-          maxTokens,
+          // 预算按 key 现算：只有首章是「按字数」的，其余几步是固定额度
+          maxTokens: resolveBudget(budgets, budgetKey, targetWords),
           onDelta: (delta) => {
             if (abortRef.current) return
             streamRef.current += delta
@@ -333,21 +335,21 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
   }
 
   const runTitle = (): Promise<boolean> =>
-    runStep(1, 'outline', () => titleMessages(idea), STEP_TOKENS.title, applyTitle)
+    runStep(1, 'outline', () => titleMessages(idea), BUDGET_KEYS.quickstartTitle, applyTitle)
 
   const runSettings = (): Promise<boolean> => {
     if (!title) return Promise.resolve(false)
-    return runStep(2, 'outline', () => settingsMessages({ ...idea, title, perChapter: form.perChapter }), STEP_TOKENS.settings, applySettings)
+    return runStep(2, 'outline', () => settingsMessages({ ...idea, title, perChapter: form.perChapter }), BUDGET_KEYS.quickstartSettings, applySettings)
   }
 
   const runVolumes = (): Promise<boolean> => {
     if (!title) return Promise.resolve(false)
-    return runStep(3, 'outline', () => volumesMessages({ ...idea, title, settings }), STEP_TOKENS.volumes, applyVolumes)
+    return runStep(3, 'outline', () => volumesMessages({ ...idea, title, settings }), BUDGET_KEYS.quickstartVolumes, applyVolumes)
   }
 
   const runChapters = (): Promise<boolean> => {
     if (!title) return Promise.resolve(false)
-    return runStep(4, 'outline', () => chaptersMessages({ ...idea, title, settings, volumes }), STEP_TOKENS.chapters, applyChapters)
+    return runStep(4, 'outline', () => chaptersMessages({ ...idea, title, settings, volumes }), BUDGET_KEYS.quickstartChapters, applyChapters)
   }
 
   const productNow = (firstChapter: string): QuickStartProduct => ({
@@ -372,8 +374,9 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
           useApp.getState().styleLibrary,
           useApp.getState().config?.settings.genreConventions
         ),
-      tokensForWords(form.perChapter),
-      applyFirstChapter
+      BUDGET_KEYS.quickstartFirstChapter,
+      applyFirstChapter,
+      form.perChapter
     )
 
   const runner = (step: number): Promise<boolean> => {

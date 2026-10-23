@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { CircleStop, Sparkles, Trash } from 'lucide-react'
 import type { OutlineNode, Project } from '@shared/types'
 import { Button, Field, Input, Modal, Segmented, Textarea } from '../../../components/ui'
-import { buildOutlineMessages, tokensForWords } from '../../../lib/prompt'
+import { buildOutlineMessages } from '../../../lib/prompt'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budgets'
 import { taskModelLabel, useApp } from '../../../store/app'
 import { useAiText } from '../useAiText'
 import { countChapterMarkers, parseOutlineText } from './parse'
@@ -34,6 +35,7 @@ export function GenOutlineModal({
   project: Project
 }): ReactNode {
   const config = useApp((s) => s.config)
+  const budgets = useApp((s) => s.config?.settings.tokenBudgets) ?? DEFAULT_TOKEN_BUDGETS
   const toast = useApp((s) => s.toast)
   const patchProject = useApp((s) => s.patchProject)
 
@@ -87,7 +89,8 @@ export function GenOutlineModal({
       useApp.getState().styleLibrary,
       useApp.getState().config?.settings.genreConventions
     )
-    const maxTokens = tokensForWords(3200) // 10 章大纲 + 思考模型的推理都吃 max_tokens，给足预算
+    // 按 3200 字估（10 章大纲）走 outline.generate；思考模型的推理也吃 max_tokens，预算里已含 thinkPad
+    const maxTokens = resolveBudget(budgets, BUDGET_KEYS.outlineGenerate, 3200)
     let result = await ai.run({ task: 'outline', messages, maxTokens, temperature: 0.75 })
     if (!result) {
       setPhase('input')

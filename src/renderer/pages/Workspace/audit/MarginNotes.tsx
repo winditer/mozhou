@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { MessageSquareQuote, RefreshCw, Sparkles } from 'lucide-react'
 import type { Chapter, Project } from '@shared/types'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budgets'
 import { Button, Spinner } from '../../../components/ui'
+import { useApp } from '../../../store/app'
 import { generateCustom } from '../../../lib/generate'
 import { buildMarginNoteMessages, parseMarginNotes, splitParagraphs, type MarginNote } from './margin'
 import type { Channel } from '@shared/types'
@@ -31,6 +33,7 @@ export function MarginNotes({
   /** 取一次可用的模型（体检任务级别） */
   resolveModel: () => { channel: Channel; model: string; label: string } | null
 }): ReactNode {
+  const budgets = useApp((s) => s.config?.settings.tokenBudgets) ?? DEFAULT_TOKEN_BUDGETS
   const [notes, setNotes] = useState<MarginNote[] | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -56,7 +59,7 @@ export function MarginNotes({
         temperature: 0.4,
         system: messages[0].content,
         user: messages[1].content,
-        maxTokens: 1500,
+        maxTokens: resolveBudget(budgets, BUDGET_KEYS.marginNotes),
         onDelta: () => {},
         onThought: () => {}
       })

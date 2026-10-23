@@ -1,4 +1,5 @@
 import type { Channel, Chapter, Project, TaskKind } from '@shared/types'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget, type TokenBudgets } from '@shared/budgets'
 import type { StyleLibrary } from '@shared/styleLibrary'
 import type { GenreConventionOverrides } from '@shared/genres'
 import { countWords, stripHtml, truncate } from '@shared/utils'
@@ -9,8 +10,7 @@ import {
   buildSummaryMessages,
   buildSystemPrompt,
   contextToText,
-  assembleContext,
-  tokensForWords
+  assembleContext
 } from './prompt'
 
 export interface GenParams {
@@ -32,6 +32,8 @@ export interface GenParams {
    * 那一路就会用回内置公约，跟别处生成出来的东西不是一套规矩。
    */
   conventions?: GenreConventionOverrides | null
+  /** 输出预算配置；不传则用默认值（与改造前行为一致） */
+  budgets?: TokenBudgets
   onDelta: (d: string) => void
   /** 思考增量（reasoning_content 等），只用于进度展示，不属于正文 */
   onThought?: (d: string) => void
@@ -56,6 +58,7 @@ export interface DraftGenParams extends GenParams {
  * 每轮都通过 onDelta 继续追加到界面上，用户看到的是连贯的流。
  */
 export async function generateDraft(p: DraftGenParams): Promise<string> {
+  const budgets = p.budgets ?? DEFAULT_TOKEN_BUDGETS
   const messages = buildDraftMessages(
     p.project,
     p.chapter,
@@ -79,7 +82,7 @@ export async function generateDraft(p: DraftGenParams): Promise<string> {
     messages,
     task: p.task,
     temperature: p.temperature,
-    maxTokens: tokensForWords(p.targetWords),
+    maxTokens: resolveBudget(budgets, BUDGET_KEYS.draftGenerate, p.targetWords),
     onDelta: (d) => {
       text += d
       p.onDelta(d)
@@ -109,7 +112,7 @@ export async function generateDraft(p: DraftGenParams): Promise<string> {
       ],
       task: p.task,
       temperature: p.temperature,
-      maxTokens: tokensForWords(Math.max(400, p.targetWords - countWords(text))),
+      maxTokens: resolveBudget(budgets, BUDGET_KEYS.draftContinue, Math.max(400, p.targetWords - countWords(text))),
       onDelta: (d) => {
         text += d
         p.onDelta(d)
@@ -125,6 +128,7 @@ export async function generateDraft(p: DraftGenParams): Promise<string> {
 export async function generateSelection(
   p: GenParams & { selection: string; instruction: string }
 ): Promise<string> {
+  const budgets = p.budgets ?? DEFAULT_TOKEN_BUDGETS
   const messages = buildSelectionMessages(
     p.project,
     p.chapter,
@@ -139,7 +143,7 @@ export async function generateSelection(
     messages,
     task: 'polish',
     temperature: p.temperature,
-    maxTokens: tokensForWords(Math.max(300, countWords(p.selection) * 2)),
+    maxTokens: resolveBudget(budgets, BUDGET_KEYS.draftSelection, Math.max(300, countWords(p.selection) * 2)),
     onDelta: p.onDelta,
     onThought: p.onThought
   })
@@ -149,6 +153,7 @@ export async function generateSelection(
 export async function generateSummary(
   p: GenParams & { chapter: Chapter }
 ): Promise<string> {
+  const budgets = p.budgets ?? DEFAULT_TOKEN_BUDGETS
   const messages = buildSummaryMessages(p.project, p.chapter)
   const r = await sendChat({
     channel: p.channel,
@@ -156,7 +161,7 @@ export async function generateSummary(
     messages,
     task: 'summary',
     temperature: 0.3,
-    maxTokens: 600,
+    maxTokens: resolveBudget(budgets, BUDGET_KEYS.summaryAuto),
     onDelta: p.onDelta,
     onThought: p.onThought
   })
@@ -171,6 +176,7 @@ export async function generateChatReply(
     library?: StyleLibrary | null
   }
 ): Promise<string> {
+  const budgets = p.budgets ?? DEFAULT_TOKEN_BUDGETS
   // 对话时必须能看到「当前这一章」的正文，否则模型只会拿到前文/设定
   const ctx = assembleContext(p.project, p.chapter, 20000, {
     includeCurrent: true,
@@ -190,7 +196,7 @@ export async function generateChatReply(
     messages,
     task: 'chat',
     temperature: p.temperature,
-    maxTokens: 3000,
+    maxTokens: resolveBudget(budgets, BUDGET_KEYS.chatReply),
     onDelta: p.onDelta,
     onThought: p.onThought
   })
@@ -209,7 +215,7 @@ export async function generateCustom(
     ],
     task: p.task,
     temperature: p.temperature,
-    maxTokens: p.maxTokens ?? 3000,
+    maxTokens: p.maxTokens ?? resolveBudget(p.budgets ?? DEFAULT_TOKEN_BUDGETS, BUDGET_KEYS.customDefault),
     onDelta: p.onDelta,
     onThought: p.onThought
   })

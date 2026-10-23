@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { BookMarked, Database, Fingerprint, Info, ListChecks, Palette, PenLine, Plug } from 'lucide-react'
+import { BookMarked, Database, Fingerprint, Gauge, Info, ListChecks, Palette, PenLine, Plug } from 'lucide-react'
 import { AboutSection } from './AboutSection'
+import { BudgetsSection } from './BudgetsSection'
 import { AppearanceSection } from './AppearanceSection'
 import { ChannelsSection } from './ChannelsSection'
 import { DataSection } from './DataSection'
@@ -10,13 +11,23 @@ import { PreferencesSection } from './PreferencesSection'
 import { StyleLibrarySection } from './StyleLibrary'
 import { TasksSection } from './TasksSection'
 
-type SectionId = 'channels' | 'tasks' | 'style' | 'genres' | 'appearance' | 'prefs' | 'data' | 'about'
+type SectionId =
+  | 'channels'
+  | 'tasks'
+  | 'style'
+  | 'genres'
+  | 'budgets'
+  | 'appearance'
+  | 'prefs'
+  | 'data'
+  | 'about'
 
 const NAV: { id: SectionId; label: string; icon: LucideIcon }[] = [
   { id: 'channels', label: '渠道与模型', icon: Plug },
   { id: 'tasks', label: '任务分配', icon: ListChecks },
   { id: 'style', label: '文风分身库', icon: Fingerprint },
   { id: 'genres', label: '题材公约', icon: BookMarked },
+  { id: 'budgets', label: '输出预算', icon: Gauge },
   { id: 'appearance', label: '外观与排版', icon: Palette },
   { id: 'prefs', label: '写作偏好', icon: PenLine },
   { id: 'data', label: '数据与备份', icon: Database },
@@ -79,6 +90,7 @@ export function Settings(): ReactNode {
           {active === 'tasks' && <TasksSection />}
           {active === 'style' && <StyleLibrarySection />}
           {active === 'genres' && <GenresSection />}
+          {active === 'budgets' && <BudgetsSection />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'prefs' && <PreferencesSection />}
           {active === 'data' && <DataSection />}

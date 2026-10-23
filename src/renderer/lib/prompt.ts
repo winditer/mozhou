@@ -428,20 +428,6 @@ export function buildOutlineMessages(
   ]
 }
 
-/** 生成用的 max_tokens 估算：中文 1 字≈2 token 预算更安全 */
-/**
- * 按目标字数给出输出预算。
- *
- * 之前是 words*2.2 且下限 1024，对推理类模型偏低：思考过程也计入 max_tokens，
- * 预算被思考吃光后正文就是空的或半截。这里改为：
- * - 正文按 2.2 倍留（中文一字约 0.75–1.5 token，2.2 倍已有余量）；
- * - 再额外加 1024 给思考；
- * - 下限抬到 2048，宁多不少。
- */
-export function tokensForWords(words: number): number {
-  return Math.min(16000, Math.max(2048, Math.round(words * 2.2) + 1024))
-}
-
 export function countGenerated(text: string): number {
   return countWords(text)
 }

@@ -1,40 +1,12 @@
 import { promises as fs } from 'node:fs'
 import { safeStorage } from 'electron'
-import type { AppSettings, Channel, Config, ModelEntry } from '@shared/types'
+import type { Channel, Config, ModelEntry } from '@shared/types'
 import { configFile, secretsFile } from '../paths'
 import { readJson, writeJsonAtomic } from './jsonStore'
+import { DEFAULT_SETTINGS, mergeSettings, normalizeConventions } from './mergeSettings'
 
-export const DEFAULT_SETTINGS: AppSettings = {
-  themeId: 'paper',
-  typography: {
-    fontFamily: '"Songti SC", "STSong", "Noto Serif SC", Georgia, serif',
-    fontSize: 17,
-    lineHeight: 1.9,
-    pageWidth: 760,
-    indent: true,
-    paragraphSpacing: 0.6,
-    dimUnfocused: false
-  },
-  typewriter: false,
-  focusMode: false,
-  shelfCoverSize: 'm',
-  dailyGoal: 3000,
-  taskModels: {
-    draft: null,
-    outline: null,
-    polish: null,
-    naming: null,
-    summary: null,
-    audit: null,
-    chat: null
-  },
-  lastProjectId: null,
-  temperature: 0.85,
-  firstRunDone: false,
-  showWordCountBar: true,
-  // 空表 = 全部沿用 genres.ts 的内置公约；作者在设置里改过谁就出现谁
-  genreConventions: {}
-}
+/** 默认设置定义在 mergeSettings.ts（纯模块，便于单测），这里转出去保持既有引用 */
+export { DEFAULT_SETTINGS } from './mergeSettings'
 
 export const DEFAULT_CONFIG: Config = {
   version: 1,
@@ -49,37 +21,8 @@ export async function loadConfig(): Promise<Config> {
     version: raw.version ?? 1,
     channels: (raw.channels ?? []).map(normalizeChannel),
     models: (raw.models ?? []).map(normalizeModel),
-    settings: {
-      ...DEFAULT_SETTINGS,
-      ...(raw.settings ?? {}),
-      shelfCoverSize: normalizeCoverSize(raw.settings?.shelfCoverSize),
-      typography: { ...DEFAULT_SETTINGS.typography, ...(raw.settings?.typography ?? {}) },
-      taskModels: { ...DEFAULT_SETTINGS.taskModels, ...(raw.settings?.taskModels ?? {}) },
-      genreConventions: normalizeConventions(raw.settings?.genreConventions)
-    }
+    settings: mergeSettings(raw.settings)
   }
-}
-
-/**
- * 题材公约覆盖表是用户手写正文，落盘前必须洗一遍：
- * 丢掉空值 / 非字符串（空值等于「恢复默认」，存着只会让解析逻辑多绕一步），
- * 顺手去首尾空白，避免「改了两个空格」也算覆盖、在设置页里显示成已自定义。
- */
-function normalizeConventions(v: unknown): Record<string, string> {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
-  const out: Record<string, string> = {}
-  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (typeof val !== 'string') continue
-    const text = val.trim()
-    if (text) out[k] = text
-  }
-  return out
-}
-
-/** 老配置里可能存着已下线的 'sl' 档位，统一落到新的最小档 's' */
-function normalizeCoverSize(v: unknown): 's' | 'm' | 'l' {
-  if (v === 'l' || v === 'm' || v === 's') return v
-  return v === 'sl' ? 's' : 'm'
 }
 
 function normalizeChannel(c: Channel): Channel {

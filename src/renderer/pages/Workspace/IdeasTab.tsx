@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import type { Project } from '@shared/types'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budgets'
 import { relativeTime, uid } from '@shared/utils'
 import { resolveTaskModel, useApp } from '../../store/app'
 import { generateCustom } from '../../lib/generate'
@@ -10,6 +11,7 @@ import { CircleStop, Lightbulb, Pin, Sparkles, Trash2 } from 'lucide-react'
 
 export function IdeasTab({ project }: { project: Project }): ReactNode {
   const { patchProject, config, toast } = useApp()
+  const budgets = useApp((s) => s.config?.settings.tokenBudgets) ?? DEFAULT_TOKEN_BUDGETS
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
   const [streamed, setStreamed] = useState('')
@@ -44,7 +46,7 @@ export function IdeasTab({ project }: { project: Project }): ReactNode {
         task: 'naming',
         system: sys,
         user,
-        maxTokens: 900,
+        maxTokens: resolveBudget(budgets, BUDGET_KEYS.namingIdeas),
         temperature: 1.0,
         onDelta: (d) => setStreamed((t) => t + d),
         onThought: (d) => setThought((t) => t + d)
