@@ -29,6 +29,13 @@
 
 ## 更新日志
 
+### 1.3.0
+- **新增：输出预算逐项可调**。「设置 → 输出预算」把原先写死的 24 处输出额度全部开放，每个调用点独立一项：正文生成、长度守护补写、选中段落润色、大纲推演、章节简介、设定卡（人物／其他）、一键开书的五步、章节摘要、全书体检、单章体检、伏笔猎手、取名灵感、文风特征提取、文风试写对比、文风分身 AI 生成、段边批注、对话助手、自定义调用兜底。
+- **两类额度，分开配**：摘要、体检这类长度自洽的任务给「固定额度」；正文类任务给「按字数」——目标字数 × 每字倍数 + 思考余量，再夹到下限与上限之间。默认值与 1.2.0 完全一致，不调就不变。
+- **配的是输出上限，不含 Prompt**。注意推理模型的**思考过程也计入**这个额度且无法排除，所以「思考余量」别调得太小——1.1.2 修的开书空白，就是预算被思考吃光导致的。
+- **新增：题材公约可在设置里覆盖**。「设置 → 题材公约」可按题材改写内置公约，留空即回落内置。提示词注入与右侧面板展示走同一份渲染逻辑，不会出现面板写着「已注入」而提示词里其实是空的。
+- 修：主分支 `package.json` 的 `scripts` 与 `devDependencies` 被误删导致无法构建，已恢复。
+
 ### 1.2.0
 - **新增：系统文风分身库**。设置里多了一整块「文风分身库」——内置 **100 位作家、六大流派**（传统文学 18 / 网文金牌 18 / 言情女性向 16 / 悬疑科幻 17 / 历史武侠 16 / 新类型 15），每位 6–8 条**可执行**的文风特征 + 风格摘要。
 - **引用而非拷贝**：书内「从分身库添加」只存来源 ID。你在设置里改了某位作家的特征，**所有引用它的书立刻同步**，不用逐本去改；想在这个基础上二次加工，可以勾「拷贝一份到本书」。
@@ -136,8 +143,8 @@ npm run build         # electron-vite build → out/
 ### 打包
 
 ```bash
-npm run dist:mac      # → release/Mozhou-1.2.0-arm64.dmg + -x64.dmg
-npm run dist:win      # → release/Mozhou-Setup-1.2.0.exe
+npm run dist:mac      # → release/Mozhou-1.3.0-arm64.dmg + -x64.dmg
+npm run dist:win      # → release/Mozhou-Setup-1.3.0.exe
 npm run dist:dir      # 只出未压缩目录，调试打包问题用
 ```
 
@@ -145,8 +152,8 @@ npm run dist:dir      # 只出未压缩目录，调试打包问题用
 
 | 产物 | 说明 |
 |---|---|
-| `release/Mozhou-1.2.0-arm64.zip` | Apple Silicon 版，解压得到 `Mozhou.app`，拖进「应用程序」即可 |
-| `release/Mozhou-1.2.0-x64.zip` | Intel 版 |
+| `release/Mozhou-1.3.0-arm64.zip` | Apple Silicon 版，解压得到 `Mozhou.app`，拖进「应用程序」即可 |
+| `release/Mozhou-1.3.0-x64.zip` | Intel 版 |
 | `release/mac-arm64/Mozhou.app` | 解包后的 arm64 应用本体 |
 
 > **关于 .dmg**：制作 dmg 要调 `hdiutil` 挂载磁盘镜像。在受限沙箱/CI 容器里这一步会被系统拒绝（`hdiutil create: Operation not permitted`），所以这里交付的是等价的 `.zip`。在你自己的 Mac 桌面上运行 `bash scripts/make-dmg.sh`（或 `npm run dist:mac`）就能得到 dmg——`electron-builder.yml` 里的 dmg target 一直是配好的，没有删。
