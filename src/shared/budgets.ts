@@ -15,8 +15,6 @@
  *
  * src/shared 会同时编译进主进程和渲染进程，这里只能用纯 TypeScript：
  * 不引入 electron、react，也不碰 node 内置模块。
- *
- * 历史备注：本文件早期直接从 src/shared 引入而没有引 prompt.ts。
  */
 
 /** 全部预算点的字面 key。调用点一律从 BUDGET_KEYS 取，别手写字符串。 */
@@ -53,7 +51,8 @@ export interface FixedBudget {
 
 /**
  * 按字数预算：写多少字就给多少额度，跟着目标字数走。
- * - perWord：每个字折算多少 token（中文一字约 0.75–1.5 token，2.2 倍已有余量）
+ * - perWord：每个字折算多少 token（中文一字约 0.75–1.5 token）。取 2.2 是为了给正文留余量：
+ *   模型实际输出常比按字数的估算更铺张，留一点空间避免正文被截断
  * - thinkPad：额外留给思考过程的额度，因为思考也计入 maxTokens
  * - min / max：兜住下限与上限，下限避免小段落预算过低被思考吃光，上限避免超长章节把成本顶穿
  */
@@ -167,6 +166,7 @@ export function clampBudget(budget: TokenBudget): TokenBudget {
     const max = clampInt(budget.max, 1, 32768)
     return {
       kind: 'perWord',
+      /** 倍率不取整 */
       perWord: Math.min(8, Math.max(0.5, finiteOr(budget.perWord, 0.5))),
       thinkPad: clampInt(budget.thinkPad, 0, 16384),
       min: Math.min(min, max),
@@ -179,6 +179,26 @@ export function clampBudget(budget: TokenBudget): TokenBudget {
 }
 
 /**
+ * 判断一份原始配置是不是「结构完整」的预算。
+ *
+ * 只看形状，不管数值是否越界——越界交给 clampBudget 去夹。
+ * 之所以要先判形状：clampBudget 拿不到 key，遇到看不懂的东西只能兜成
+ * tokens: 1；而 1 个 token 的请求等于什么都没写出来。resolveBudget 知道 key，
+ * 所以有资格判断「这不是配置，是脏数据」，然后改回默认值。
+ *
+ * 要求 kind 严格等于 'fixed' / 'perWord'（大小写都不能差），
+ * 对应字段必须都存在且是有限数。少一个字段就算结构不全，整个回默认。
+ */
+function isWellFormed(budget: unknown): budget is TokenBudget {
+  if (typeof budget !== 'object' || budget === null) return false
+  const b = budget as Record<string, unknown>
+  const isNum = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v)
+  if (b.kind === 'fixed') return isNum(b.tokens)
+  if (b.kind === 'perWord') return isNum(b.perWord) && isNum(b.thinkPad) && isNum(b.min) && isNum(b.max)
+  return false
+}
+
+/**
  * 算出某个调用点这次该给多少输出预算。
  *
  * - fixed：直接给配置的 token 数。
@@ -187,11 +207,15 @@ export function clampBudget(budget: TokenBudget): TokenBudget {
  * - perWord 但字数未知（undefined / NaN / Infinity）：给 min，绝不给 0——
  *   0 会让请求直接报错，比写不完整还糟。
  * - 传进来的表缺这个 key（老配置、老存档）：回落到 DEFAULT_TOKEN_BUDGETS。
+ * - 传进来的条目结构是坏的（不是对象、kind 拼错、字段缺失或不是数）：也回落到
+ *   DEFAULT_TOKEN_BUDGETS。这类数据如果直接过 clampBudget 会被兜成 tokens: 1，
+ *   等于静默把请求废掉，所以必须先认出来。
  *
- * 拿到的预算一律先过 clampBudget，所以脏配置也不会算出非法值。
+ * 拿到的预算一律先过 clampBudget，所以越界的数值也不会算出非法值。
  */
 export function resolveBudget(budgets: TokenBudgets, key: BudgetKey, targetWords?: number): number {
-  const raw = budgets?.[key] ?? DEFAULT_TOKEN_BUDGETS[key]
+  const entry = budgets?.[key]
+  const raw = isWellFormed(entry) ? entry : DEFAULT_TOKEN_BUDGETS[key]
   const budget = clampBudget(raw)
   if (budget.kind === 'fixed') return budget.tokens
 

@@ -218,6 +218,12 @@ console.log('BUDGET_KEYS 结构')
   }
   // 两边的集合必须完全一样
   check('两边 key 集合一致', [...values].sort().join('|') === [...defaultKeys].sort().join('|'))
+  // 设置页按 BUDGET_KEYS 的顺序渲染行，所以顺序也得跟默认表一致，不能只比集合
+  check(
+    'BUDGET_KEYS 顺序与默认表一致',
+    Object.values(BUDGET_KEYS).join('|') === Object.keys(DEFAULT_TOKEN_BUDGETS).join('|'),
+    `BUDGET_KEYS: ${Object.values(BUDGET_KEYS).join('|')}\n默认表: ${Object.keys(DEFAULT_TOKEN_BUDGETS).join('|')}`
+  )
   check('预算种类只有两种', defaultKeys.every((k) => ['fixed', 'perWord'].includes(DEFAULT_TOKEN_BUDGETS[k].kind)))
   check('fixed 15 个 / perWord 8 个',
     defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length === 15 &&
@@ -248,6 +254,44 @@ console.log('缺条目回落到默认')
   )
   check('默认表没被解析过程改坏', resolveBudget(DEFAULT_TOKEN_BUDGETS, 'draft.generate', 3000) === 7624 &&
     JSON.stringify(DEFAULT_TOKEN_BUDGETS['draft.generate']) === JSON.stringify({ kind: 'perWord', perWord: 2.2, thinkPad: 1024, min: 2048, max: 16000 }))
+}
+
+/* ── 8. 结构坏掉但「看着像配置」的条目，必须回落默认值而不是被兜成 1 ── */
+// 这些值单看都不是完整的预算：kind 大小写错、少了 kind、kind 值不认识、
+// 干脆就不是对象。以前它们会被 clampBudget 兜成 { kind:'fixed', tokens:1 }，
+// 于是 resolveBudget 返回 1——请求拿 1 个 token，等于静默失败。
+console.log('结构坏的条目回落默认')
+{
+  const MALFORMED = [
+    ['kind 写成 Fixed', { kind: 'Fixed', tokens: 900 }],
+    ['缺 kind', { tokens: 900 }],
+    ['kind 写成 perword', { kind: 'perword', perWord: 2.2, thinkPad: 1024, min: 2048, max: 16000 }],
+    ['字符串垃圾', 'garbage'],
+    ['数字 42', 42],
+    ['null', null]
+  ]
+  for (const [label, value] of MALFORMED) {
+    const got = resolveBudget({ 'audit.book': value }, 'audit.book')
+    check(`${label} → 回落默认 2600`, got === 2600, `实际 ${got}`)
+  }
+
+  // 结构不全的 perWord（缺 max）同样回默认，而不是拼一半参数去算
+  const partial = { kind: 'perWord', perWord: 2.2, thinkPad: 1024, min: 2048 }
+  check('perWord 缺 max → 回落默认（固定 2600 不受字数影响）', resolveBudget({ 'audit.book': partial }, 'audit.book', 5000) === 2600, resolveBudget({ 'audit.book': partial }, 'audit.book', 5000))
+  check(
+    'perWord 缺 max → 按字数的 key 回落默认参数',
+    resolveBudget({ 'draft.generate': partial }, 'draft.generate', 3000) === 7624,
+    resolveBudget({ 'draft.generate': partial }, 'draft.generate', 3000)
+  )
+
+  // 修好之后不能矫枉过正：结构完整的用户覆盖值必须照旧生效
+  check('合法的 fixed 覆盖仍然生效', resolveBudget({ 'audit.book': { kind: 'fixed', tokens: 1234 } }, 'audit.book') === 1234, resolveBudget({ 'audit.book': { kind: 'fixed', tokens: 1234 } }, 'audit.book'))
+  check(
+    '合法的 perWord 覆盖仍然生效',
+    resolveBudget({ 'draft.generate': { kind: 'perWord', perWord: 3, thinkPad: 500, min: 100, max: 9000 } }, 'draft.generate', 1000) === 3500,
+    resolveBudget({ 'draft.generate': { kind: 'perWord', perWord: 3, thinkPad: 500, min: 100, max: 9000 } }, 'draft.generate', 1000)
+  )
+  check('结构合法但数值越界仍走夹取，不回默认', resolveBudget({ 'audit.book': { kind: 'fixed', tokens: 999999 } }, 'audit.book') === 32768)
 }
 
 console.log(`\n${pass} 通过 / ${fail} 失败`)
