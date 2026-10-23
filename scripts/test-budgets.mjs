@@ -202,8 +202,8 @@ console.log('BUDGET_KEYS 结构')
   const values = Object.values(BUDGET_KEYS ?? {})
   const defaultKeys = Object.keys(DEFAULT_TOKEN_BUDGETS ?? {})
 
-  check('BUDGET_KEYS 正好 23 项', names.length === 23, `实际 ${names.length}`)
-  check('默认表正好 23 个 key', defaultKeys.length === 23, `实际 ${defaultKeys.length}`)
+  check('BUDGET_KEYS 正好 24 项', names.length === 24, `实际 ${names.length}`)
+  check('默认表正好 24 个 key', defaultKeys.length === 24, `实际 ${defaultKeys.length}`)
 
   const dupes = values.filter((v, i) => values.indexOf(v) !== i)
   check('BUDGET_KEYS 无重复值', dupes.length === 0, dupes.join(','))
@@ -225,8 +225,8 @@ console.log('BUDGET_KEYS 结构')
     `BUDGET_KEYS: ${Object.values(BUDGET_KEYS).join('|')}\n默认表: ${Object.keys(DEFAULT_TOKEN_BUDGETS).join('|')}`
   )
   check('预算种类只有两种', defaultKeys.every((k) => ['fixed', 'perWord'].includes(DEFAULT_TOKEN_BUDGETS[k].kind)))
-  check('fixed 15 个 / perWord 8 个',
-    defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length === 15 &&
+  check('fixed 16 个 / perWord 8 个',
+    defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length === 16 &&
       defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'perWord').length === 8,
     `fixed ${defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length}`
   )

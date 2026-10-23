@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { PromptMessage } from '@shared/types'
 import { STYLE_CATEGORIES, type StyleCategory, type StylePersona } from '@shared/styleLibrary'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budgets'
 import { countWords, uid } from '@shared/utils'
 import { abortChat, sendChat } from '../../../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../../../lib/stream'
@@ -136,7 +137,11 @@ export function PersonaEditor({
         messages: buildPersonaMessages(mode, seed, brief.trim()) as PromptMessage[],
         task: 'polish',
         temperature: mode === 'draft' ? 0.6 : 0.4,
-        maxTokens: 1200,
+        // 预算现取，避免设置页改完预算后这里还用着旧快照
+        maxTokens: resolveBudget(
+          useApp.getState().config?.settings.tokenBudgets ?? DEFAULT_TOKEN_BUDGETS,
+          BUDGET_KEYS.personaGenerate
+        ),
         onDelta: (d) => {
           if (!aliveRef.current || stoppedRef.current) return
           text += d

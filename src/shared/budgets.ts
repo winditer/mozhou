@@ -37,6 +37,7 @@ export type BudgetKey =
   | 'naming.ideas'
   | 'style.traits'
   | 'style.trial'
+  | 'persona.generate'
   | 'chat.reply'
   | 'custom.default'
   | 'quickstart.title'
@@ -93,6 +94,7 @@ export const BUDGET_KEYS = {
   namingIdeas: 'naming.ideas',
   styleTraits: 'style.traits',
   styleTrial: 'style.trial',
+  personaGenerate: 'persona.generate',
   chatReply: 'chat.reply',
   customDefault: 'custom.default',
   quickstartTitle: 'quickstart.title',
@@ -131,6 +133,7 @@ export const DEFAULT_TOKEN_BUDGETS: TokenBudgets = {
   'naming.ideas': fixed(900),
   'style.traits': fixed(700),
   'style.trial': fixed(600),
+  'persona.generate': fixed(1200),
   'chat.reply': fixed(3000),
   'custom.default': fixed(3000),
   'quickstart.title': fixed(1200),

@@ -169,6 +169,11 @@ const GROUPS: GroupDef[] = [
         desc: '用同一引子写约 150 字的短段，比较开／关文风的差别。'
       },
       {
+        key: BUDGET_KEYS.personaGenerate,
+        label: '文风分身 AI 生成',
+        desc: '在文风分身库里让 AI 起草或改写一份分身（约 6–8 条特征 + 摘要）。'
+      },
+      {
         key: BUDGET_KEYS.marginNotes,
         label: '段边批注',
         desc: '为整章逐段写侧批，一次覆盖所有段落，至多 6 条批注。'
