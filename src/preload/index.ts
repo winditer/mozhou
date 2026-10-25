@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { StreamDone } from '@shared/types'
 
 const invoke = ipcRenderer.invoke.bind(ipcRenderer)
 const send = ipcRenderer.send.bind(ipcRenderer)
@@ -51,7 +52,7 @@ const api = {
     models: (channel: unknown, apiKey: string) => invoke('ai:models', channel, apiKey),
     onChunk: (cb: (c: { streamId: string; delta: string }) => void) => on('ai:chunk', cb),
     onThought: (cb: (c: { streamId: string; delta: string }) => void) => on('ai:thought', cb),
-    onDone: (cb: (d: { streamId: string; text: string; promptTokens: number; completionTokens: number }) => void) => on('ai:done', cb),
+    onDone: (cb: (d: StreamDone) => void) => on('ai:done', cb),
     onError: (cb: (e: { streamId: string; message: string }) => void) => on('ai:error', cb)
   },
   io: {

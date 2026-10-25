@@ -20,9 +20,27 @@ import type { Channel, ChatRequest, PromptMessage, Protocol, TestResult } from '
 import { streamAnthropic } from './anthropic'
 import { streamGemini } from './gemini'
 import { streamOpenAI } from './openai'
+import type { StreamHandle } from './sse'
 import { HttpStatusError, joinUrl } from './sse'
 
-type TokenUsage = { promptTokens: number; completionTokens: number; finishReason?: string }
+type TokenUsage = {
+  promptTokens: number
+  completionTokens: number
+  finishReason?: string
+  /**
+   * 这次没有产出任何正文（delta 一个字符都没到）。
+   *
+   * 为什么不抛错：流正常结束但正文为空，多半是模型把 max_tokens 全用在思考上、
+   * 或网关把 content 吞成了空串——上层换个方式重试往往能成功，抛错会被当成致命失败
+   * 直接弹红条，用户只能看到「生成失败」而不知道该重试。
+   */
+  empty: boolean
+  /**
+   * 发现收尾「不正常」的证据（例如 stream 异常中断）。
+   * 仅作为排查线索透出去，是否重试仍由上层按 empty / finishReason 判断。
+   */
+  finishedAbnormally?: boolean
+}
 
 interface RunArgs {
   channel: Channel
@@ -37,6 +55,13 @@ interface RunArgs {
   onThought?: (delta: string) => void
   /** 任何字节级进展（响应头 / SSE 事件 / 心跳），用于重置空闲计时 */
   onActivity: () => void
+  /**
+   * 发现收尾异常（流没给 `[DONE]` 就断了等）时回调。
+   * 适配器自己不抛错——半截正文对写作仍有价值，抛错会让上层把能用的内容丢掉。
+   */
+  onAbnormalEnd?: (reason: string) => void
+  /** 适配器打开流之后交回来，registry 负责在请求结束时关掉连接 */
+  onStream?: (handle: StreamHandle) => StreamHandle
 }
 
 /** 进行中的流：streamId → 控制器（供 abortStream 用） */
@@ -46,6 +71,11 @@ const DEFAULT_IDLE_TIMEOUT_MS = 180_000
 const REQUEST_TIMEOUT_MS = 180_000
 const ABORTED_MESSAGE = '已中止'
 const TIMEOUT_MESSAGE = '请求超时（超过 180 秒无响应）'
+/**
+ * 停止读取之后等连接关闭的上限。
+ * stream() 的任务要等连接真的断掉才 resolve，网关不理会 destroy 时不设上限会一直挂着。
+ */
+const TEARDOWN_TIMEOUT_MS = 3_000
 
 /** 空闲上限：连续这么久没有任何进展才中止（可用 MOZHOU_AI_IDLE_TIMEOUT_MS 覆盖，测试用） */
 function idleTimeoutMs(): number {
@@ -121,7 +151,11 @@ function describeError(err: unknown, channel: Channel): string {
 
 /* ─────────────────────────── 分发 ─────────────────────────── */
 
-async function runAdapter(args: RunArgs): Promise<TokenUsage> {
+/**
+ * 适配器只负责报用量与结束原因；`empty` 由 streamChat 按「到底有没有收到 delta」判定，
+ * 所以这里先填 false 占位，避免每家各自判断导致口径不一致。
+ */
+async function runAdapter(args: RunArgs): Promise<Omit<TokenUsage, 'empty'>> {
   switch (args.channel.protocol) {
     case 'openai':
       return streamOpenAI(args)
@@ -164,6 +198,7 @@ export async function streamChat(
   let idleTimer: ReturnType<typeof setTimeout> | null = null
   let idleError: Error | null = null
   let sawContent = false
+  let abnormalEnd: string | null = null
 
   // 任何进展都重置计时：响应头、SSE 事件、心跳注释、思考增量
   const armIdleTimer = (): void => {
@@ -190,8 +225,17 @@ export async function streamChat(
       }
     : undefined
 
+  // 适配器停止读流之后，连接要由这里主动关掉：undici 的 stream() 任务不会因为
+  // onDelta 里提前 return 而结束，不 destroy 就会把连接一直占着
+  // 明确写成「可为空的对象」而不是 null 联合，否则 TS 会把 finally 里的取值收窄成 never
+  const holder: { current?: StreamHandle } = {}
+  const openedStream = (handle: StreamHandle): StreamHandle => {
+    holder.current = handle
+    return handle
+  }
+
   try {
-    return await runAdapter({
+    const usage = await runAdapter({
       channel: req.channel,
       apiKey: req.apiKey,
       model: req.model,
@@ -201,17 +245,49 @@ export async function streamChat(
       signal: controller.signal,
       onDelta: handleDelta,
       onThought: handleThought,
-      onActivity: handleActivity
+      onActivity: handleActivity,
+      onAbnormalEnd: (reason) => {
+        abnormalEnd = reason
+      },
+      onStream: openedStream
     })
+    // 被中止（空闲超时 / 用户点停止）时适配器可能「安静地」返回半截结果，
+    // 这时必须按错误上抛：空白正文 + 静默成功，上层没法区分「生成完了」和「卡死了」
+    if (idleError) throw idleError
+    // 正文是否真的产出过，只认实际收到的 delta：网关可能返回 finishReason:'stop'
+    // 却一个字都没给（思考吃光预算 / content 被过滤），这种情况上层必须能识别出来
+    return { ...usage, empty: !sawContent, finishedAbnormally: abnormalEnd !== null || usage.finishedAbnormally }
   } catch (err) {
     if (idleError) throw idleError
     if (isAbortError(err)) throw new Error(ABORTED_MESSAGE) // 用户主动中止，上层据此区分
     throw new Error(describeError(err, req.channel))
   } finally {
     if (idleTimer) clearTimeout(idleTimer)
+    // 关连接并等它真断：不等的话下一次请求可能撞上同一个还占着的 socket
+    const stream = holder.current
+    if (stream) {
+      stream.close()
+      await waitForTeardown(stream)
+    }
     // 同一 streamId 可能已被新请求占用，只清理自己这一条
     if (controllers.get(req.streamId) === controller) controllers.delete(req.streamId)
   }
+}
+
+/**
+ * 等流彻底关掉（最多 TEARDOWN_TIMEOUT_MS）。
+ * 迟迟不断说明网关不认 destroy，这时放弃等待——连接留给 socket 超时回收，
+ * 但不能因此卡住本次请求的返回，更不能把用户的正文丢掉。
+ */
+async function waitForTeardown(stream: StreamHandle): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  await Promise.race([
+    stream.done.catch(() => {}),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, TEARDOWN_TIMEOUT_MS)
+    })
+  ])
+  if (timer) clearTimeout(timer)
 }
 
 /**

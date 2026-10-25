@@ -7,13 +7,15 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { CircleStop, RotateCcw, Settings2, Shuffle, Sparkles } from 'lucide-react'
-import type { PromptMessage, TaskKind } from '@shared/types'
+import type { ChatRequest, PromptMessage, TaskKind } from '@shared/types'
 import { GENRES } from '@shared/genres'
 import { SCENES, getScene } from '@shared/scenes'
-import { clamp, countWords, estimateTokens, uid } from '@shared/utils'
+import { clamp, countWords, estimateTokens, stripHtml, truncate, uid } from '@shared/utils'
 import { abortChat, sendChat } from '../../lib/ai'
+import { topUpDraft, type TopUpResult } from '../../lib/generate'
+import { buildDraftMessages } from '../../lib/prompt'
 import { isAbortMessage, streamStatus, useElapsed } from '../../lib/stream'
-import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget, type BudgetKey } from '@shared/budgets'
+import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget, type BudgetKey, type TokenBudgets } from '@shared/budgets'
 import { resolveTaskModel, useApp } from '../../store/app'
 import { Button, Field, Input, Modal, Select, Spinner, Textarea } from '../../components/ui'
 import {
@@ -53,6 +55,44 @@ const INITIAL_STATUS: Record<number, StepStatus> = { 1: 'pending', 2: 'pending',
 
 const DEFAULT_SCENE = 'long-novel'
 
+/* ───────────────────── 首章「补字」 ─────────────────────
+
+   为什么要有这一段：正文那条路的长度守护以前只在 project.settings.lengthMode === 'strict'
+   时生效，而一键开书这会书还没建出来、压根没有 project —— 于是首章永远只跑一轮
+   sendChat，maxTokens 按字数给死后模型吐多少算多少。目标 2500 字只出来 800 字，
+   用户拿到的是个残缺首章，还以为模型就这点产能。
+
+   补写循环本身已沉到 generate.ts 的 topUpDraft（正文生成也用同一套），这里只做两件事：
+   把首章的消息/预算/中止标志喂进去，再把结果按 quickstart 的界面约定落地。 */
+
+/** runStep 的首轮上下文，交给 followUp 钩子继续往下写（目前只有首章补字用它） */
+interface FollowUpCtx {
+  messages: PromptMessage[]
+  /** 首轮拿到的正文 */
+  text: string
+  /** 首轮流式累积的正文（渠道不回 text 时兜底） */
+  streamText: string
+  channel: ChatRequest['channel']
+  model: string
+  temperature: number
+  budgets: TokenBudgets
+  /** 每轮补写开始前检查：用户点了停止就别再发请求 */
+  aborted: () => boolean
+  onDelta: (delta: string) => void
+  onThought: (delta: string) => void
+  onStage: (stage: string) => void
+  onUsage: (tokens: number) => void
+}
+
+interface FollowUpResult {
+  /** 完整正文（首轮 + 所有补写轮），为空表示没拿到东西 */
+  text: string
+  /** 补写中途被用户停止 */
+  aborted: boolean
+  /** 没写够/没写成时给用户看的一句话；空串表示不用提示 */
+  note: string
+}
+
 interface FormState {
   idea: string
   sceneId: string
@@ -90,6 +130,12 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
   const [streamText, setStreamText] = useState('')
   /** 思考增量（思考类模型可能一两分钟只吐思考，得让用户看见） */
   const [streamThought, setStreamThought] = useState('')
+  /**
+   * 「阶段文案」，目前只有首章补字用：
+   * 补写那几十秒里正文增量很少，光靠 streamStatus 会一直显示「已收到 820 字」像是卡死，
+   * 得有一条「正在补写第 1 轮」把原因说清楚。空串表示没有阶段信息，退回 streamStatus。
+   */
+  const [streamStage, setStreamStage] = useState('')
   const [usedTokens, setUsedTokens] = useState(0)
   const [creating, setCreating] = useState(false)
 
@@ -100,7 +146,7 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
 
   // 秒级计时，跑到多久都继续等（renderer 不设硬超时，靠文案说明模型在动）
   const elapsed = useElapsed(runningStep !== null)
-  const liveStatus = streamStatus({ text: streamText, thought: streamThought, elapsedMs: elapsed })
+  const liveStatus = streamStage || streamStatus({ text: streamText, thought: streamThought, elapsedMs: elapsed })
 
   const outlineModel = resolveTaskModel(config, null, 'outline')
   const draftModel = resolveTaskModel(config, null, 'draft')
@@ -125,6 +171,7 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
     setRunningStep(null)
     setStreamText('')
     setStreamThought('')
+    setStreamStage('')
     setUsedTokens(0)
     setCreating(false)
     abortRef.current = false
@@ -168,6 +215,10 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
    * 目标字数一律由调用方传进来，不在这个 useCallback 里读 form：它的依赖数组里没有
    * form / config，直接读会拿到旧值（改完「每章字数」再跑第 5 步，预算仍按老数字算）。
    * 调用点是每次渲染重建的，从那里传入永远是最新的。
+   *
+   * `opts.followUp` 是一段「首轮跑完之后、判 apply 之前」的钩子，只有首章正文用它做补字：
+   * 补字存在的唯一理由就是别让用户拿到残缺首章，所以它必须能**改掉要 apply 的 text**，
+   * 也得能告诉调用方「用户中途停了」——那种情况下即使字不够也不能报错、不能丢内容。
    */
   const runStep = useCallback(
     async (
@@ -176,7 +227,10 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
       build: () => PromptMessage[],
       budgetKey: BudgetKey,
       apply: (text: string) => boolean,
-      targetWords?: number
+      targetWords?: number,
+      opts?: {
+        followUp?: (ctx: FollowUpCtx) => Promise<FollowUpResult>
+      }
     ): Promise<boolean> => {
       const picked = resolveTaskModel(useApp.getState().config, null, task)
       const budgets = useApp.getState().config?.settings.tokenBudgets ?? DEFAULT_TOKEN_BUDGETS
@@ -193,16 +247,19 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
       setErr(step, '')
       setStreamText('')
       setStreamThought('')
+      setStreamStage('')
       setRunningStep(step)
 
       try {
         const messages = build()
+        // 首章走 draft 温度，与 generate.ts 里正文那条路一致
+        const temperature = task === 'draft' ? 0.86 : 0.78
         const res = await sendChat({
           channel: picked.channel,
           model: picked.model,
           messages,
           task,
-          temperature: task === 'draft' ? 0.86 : 0.78,
+          temperature,
           // 预算按 key 现算：只有首章是「按字数」的，其余几步是固定额度
           maxTokens: resolveBudget(budgets, budgetKey, targetWords),
           onDelta: (delta) => {
@@ -217,19 +274,62 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
           }
         })
 
+        let text = res.text || streamRef.current
+        setStreamText(text)
+        // 渠道不回 usage 时用本地估算兜底
+        const promptTokens = res.promptTokens || messagesTokens(messages)
+        const completionTokens = res.completionTokens || estimateTokens(text)
+        setUsedTokens((v) => v + promptTokens + completionTokens)
+
+        // 补字没写够时要留一条说明：字数不达标的话，用户得知道为什么
+        let topUpNote = ''
+
+        // 首轮失败/中断交给下面的 abort / apply 分支报错，钩子只在拿到正文之后接手
+        if (opts?.followUp && text.trim() && !abortRef.current) {
+          const follow = await opts.followUp({
+            messages,
+            text,
+            streamText: streamRef.current,
+            channel: picked.channel,
+            model: picked.model,
+            temperature,
+            budgets,
+            aborted: () => abortRef.current,
+            onDelta: (delta) => {
+              if (!delta) return
+              streamRef.current += delta
+              setStreamText(streamRef.current)
+            },
+            onThought: (delta) => {
+              thoughtRef.current += delta
+              setStreamThought(thoughtRef.current)
+            },
+            onStage: (stage) => setStreamStage(stage),
+            onUsage: (tokens) => setUsedTokens((v) => v + tokens)
+          })
+          setStreamStage('')
+          // 以钩子返回的 text 为准（它含首轮 + 全部补写轮），别再退回 res.text 把补的部分丢掉
+          if (follow.text.trim()) text = follow.text
+          setStreamText(text)
+          // 停止与失败都要保住正文：用户已经看着这些字流出来了，不能因为补写出问题就清空
+          setRaw(step, text)
+          if (follow.aborted) {
+            if (apply(text)) setMaxStep((m) => Math.max(m, Math.min(5, step + 1)))
+            setStatus(step, 'pending')
+            useApp.getState().toast('已停止生成', 'info')
+            return false
+          }
+          topUpNote = follow.note
+        }
+
         if (abortRef.current) {
           setStatus(step, 'pending')
           useApp.getState().toast('已停止生成', 'info')
           return false
         }
 
-        const text = res.text || streamRef.current
         setStreamText(text)
         setRaw(step, text)
-        // 渠道不回 usage 时用本地估算兜底
-        const promptTokens = res.promptTokens || messagesTokens(messages)
-        const completionTokens = res.completionTokens || estimateTokens(text)
-        setUsedTokens((v) => v + promptTokens + completionTokens)
 
         if (!apply(text)) {
           setStatus(step, 'error')
@@ -249,7 +349,8 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
         }
 
         setStatus(step, 'done')
-        setErr(step, '')
+        // 补字没达标/失败的那条说明要留着，否则用户只看到「完成」却字不够
+        setErr(step, topUpNote)
         setMaxStep((m) => Math.max(m, Math.min(5, step + 1)))
         return true
       } catch (e) {
@@ -267,6 +368,7 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
       } finally {
         runningRef.current = false
         setRunningStep(null)
+        setStreamStage('')
       }
     },
     [setErr, setRaw, setStatus]
@@ -364,6 +466,81 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
     firstChapter
   })
 
+  /** 补写要用的「本章约定」：首章标题 + 它的情节点，取不到就退化成整段章纲列表 */
+  const firstChapterConvention = (): string => {
+    const first = chapters[0]
+    if (first && first.summary.trim()) return `本章约定：${first.title} —— ${first.summary.trim()}`
+    const list = chapters
+      .slice(0, 3)
+      .map((c) => `- ${c.title}：${c.summary}`)
+      .join('\n')
+    return list ? `本章约定（首章为第一条）：\n${list}` : ''
+  }
+
+  /**
+   * 补字轮的上下文消息：`[system, user(首章原始要求), user(本章约定 + 已写正文)]`。
+   *
+   * 两件事必须踩住：
+   * 一、**已写正文放 user 轮，不放 assistant 轮**。放 assistant 轮会让模型顺着自己
+   *    刚写的结尾再「续」一遍，越补越水——这是补写循环里踩过的坑。
+   * 二、**正文自己带上「【已经写出来的正文】」标题**。因为调用 topUpDraft 时传了
+   *    messagesAlreadyIncludeText: true，它不会再补这个标题，只会在末尾追加
+   *    「【本次任务】只补差额」的指令。不自己标出材料段，模型分不清哪段是正文、哪段是要求。
+   *
+   * 这是**单轮**上下文，只描述「现在写到哪了」。真正的循环控制（轮数、递减预算、
+   * 空正文重试、单轮无进展就收尾、末尾那条补差额指令）全部交给 topUpDraft。
+   */
+  const firstChapterTopUpMessages = (
+    messages: PromptMessage[],
+    written: string
+  ): PromptMessage[] => {
+    const convention = firstChapterConvention()
+    const body = stripHtml(written).trim()
+    return [
+      ...messages,
+      {
+        role: 'user' as const,
+        content: [
+          convention,
+          body ? `【已经写出来的正文】\n${truncate(body, 6000)}` : ''
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+      }
+    ]
+  }
+
+  /**
+   * 补字没写够时的一句话：走 setErr(5, ...)，因为「完成但有缺口」和「失败」在界面上
+   * 都是同一个 error 提示位，用户在首章卡片上才看得到。
+   * thoughtStarved 要单独说：那是推理模型把额度吃光，换模型或调预算才解决，
+   * 跟「模型今天偷懒」是两回事。
+   */
+  const topUpNote = (r: TopUpResult): string => {
+    const total = countWords(r.text)
+    const target = form.perChapter
+    if (r.stop === 'done') return ''
+    if (r.stop === 'error') {
+      return `正文已保留，但补写失败（${r.error?.message || '未知错误'}）。当前 ${total} / ${target} 字，可以点「重新写」再来一次。`
+    }
+    if (r.stop === 'empty') {
+      return r.thoughtStarved
+        ? `正文已保留，但模型把输出额度全用在思考上了，补写写不出字。当前 ${total} / ${target} 字：请到「设置 → 渠道与模型」换一个非推理模型，或调大该渠道的最大输出。`
+        : `正文已保留，但补写的模型没有产出任何内容。当前 ${total} / ${target} 字，可以点「重新写」。`
+    }
+    if (r.stop === 'noProgress') return `已保留现有正文：最后几轮补写几乎没有新增字数（${total} / ${target} 字），不再继续尝试。`
+    return `已补写 ${r.rounds.length} 轮，篇幅仍略短（${total} / ${target} 字）。可以先采纳，再用正文页的「续写」往下补。`
+  }
+
+  /**
+   * 首章多发一步「补字」：正文那条路的长度守护默认开启，但一键开书这会儿书还没建出来、
+   * 压根没有 project，于是首章永远只跑一轮 —— 目标 2500 字常常只拿到 800 字。
+   * 这里把 topUpDraft 接上，跟正文生成用同一套判定与预算递减。
+   *
+   * 中止：topUpDraft 内部不检查中止标志，靠的是 onDelta/onStage 里先看 abortRef；
+   * 中止时 sendChat 抛「已中止」，topUpDraft 收进 stop: 'error' 并**保留 r.text**，
+   * 所以这里用 isAbortMessage 区分「用户点了停止」和「真失败」，前者按 info 收尾。
+   */
   const runFirstChapter = (): Promise<boolean> =>
     runStep(
       5,
@@ -376,7 +553,58 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
         ),
       BUDGET_KEYS.quickstartFirstChapter,
       applyFirstChapter,
-      form.perChapter
+      form.perChapter,
+      {
+        followUp: async (ctx) => {
+          const target = form.perChapter
+          // 首章从零开始，existingWords 固定 0：字数完全由这次生成的正文决定
+          const res = await topUpDraft({
+            // topUpDraft 继承 GenParams，可它整个循环只用 channel/model/task/onDelta/onStage，
+            // project 与 chapter 一次都没读（消息由下面的 messages 全权决定）。
+            // 这里仍按契约传齐：草稿 project 是「这本书现在长什么样」的真实快照，
+            // 哪天 topUpDraft 真的用它算上下文，一键开书也不会递个空对象进去。
+            // chapter 给 null 是因为首章还没落库，而草稿 project 里那章本来就是空正文，
+            // 正对应「这一章一个字都还没写」，比塞一个假 chapter 更接近事实。
+            project: assembleProject(productNow('')),
+            chapter: null,
+            channel: ctx.channel,
+            model: ctx.model,
+            task: 'draft',
+            temperature: ctx.temperature,
+            library: useApp.getState().styleLibrary,
+            conventions: useApp.getState().config?.settings.genreConventions,
+            budgets: ctx.budgets,
+            // 首章补写吃首章自己的预算项：用户在设置页调了「首章正文」的额度，
+            // 补写轮也得跟着走，否则配了等于没配
+            continueBudgetKey: BUDGET_KEYS.quickstartFirstChapter,
+            messages: firstChapterTopUpMessages(ctx.messages, ctx.text) as ReturnType<typeof buildDraftMessages>,
+            // 正文已经由 firstChapterTopUpMessages 拼进 messages，内部别再塞一遍，
+            // 只留末尾那条「只补差额」的指令
+            messagesAlreadyIncludeText: true,
+            // topUpDraft 是按这个 text 算字数与差额的，必须给最准的那份：
+            // ctx.text 是首轮的回包，首轮中断/回包为空时用流里累积的正文兜底
+            text: ctx.text || ctx.streamText,
+            targetWords: target,
+            existingWords: 0,
+            onDelta: (d) => {
+              if (ctx.aborted()) return
+              ctx.onDelta(d)
+            },
+            onThought: (d) => {
+              if (ctx.aborted()) return
+              ctx.onThought(d)
+            },
+            onStage: (stage) => {
+              if (ctx.aborted()) return
+              ctx.onStage(stage)
+            }
+          })
+          const aborted =
+            ctx.aborted() ||
+            (res.stop === 'error' && isAbortMessage(res.error?.message ?? ''))
+          return { text: res.text || ctx.text, aborted, note: aborted ? '' : topUpNote(res) }
+        }
+      }
     )
 
   const runner = (step: number): Promise<boolean> => {

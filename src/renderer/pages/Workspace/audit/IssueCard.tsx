@@ -21,12 +21,21 @@ export function IssueCard({
   project,
   onJump,
   onIgnore,
+  onApply,
   hideChapters
 }: {
   issue: AuditIssue
   project: Project
   onJump: (chapterId: string) => void
   onIgnore?: () => void
+  /**
+   * 把建议真正落到正文上。传了它，「采用」才是一个能用的按钮。
+   *
+   * 全书一致性和章节体检都传：全书体检的证据虽然摘自章节梗概、和正文不是
+   * 一字不差，但可以按相似度在涉及章节里找候选段落，多章问题则一次统一口径。
+   * 定位结果一律先给作者看对比、逐段可跳过，所以「猜」不会变成「乱改」。
+   */
+  onApply?: (issue: AuditIssue) => void
   /** 单章体检时涉及章节只有一个，重复展示没有信息量 */
   hideChapters?: boolean
 }): ReactNode {
@@ -74,9 +83,19 @@ export function IssueCard({
 
           <div className="flex items-center gap-1 shrink-0">
             {issue.suggestion && (
-              <Button size="sm" variant="ghost" onClick={() => setOpen((v) => !v)} title={open ? '收起建议' : '查看建议'}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setOpen((v) => !v)}
+                title={open ? '收起建议' : '查看建议'}
+              >
                 {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                采纳建议
+                建议
+              </Button>
+            )}
+            {issue.suggestion && onApply && (
+              <Button size="sm" variant="primary" onClick={() => onApply(issue)} title="按这条建议改写正文（会先给你看对比）">
+                <Check size={12} /> 采用
               </Button>
             )}
             {onIgnore && (

@@ -2,9 +2,9 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { ListTree, Plus, Sparkles } from 'lucide-react'
 import type { Chapter, OutlineNode } from '@shared/types'
 import { getScene } from '@shared/scenes'
-import { countWords, formatNumber, uid } from '@shared/utils'
+import { countWords, formatNumber, uid, buildOutlineIndex, resolveOutlineNodeId } from '@shared/utils'
 import { Button, EmptyState } from '../../components/ui'
-import { useApp } from '../../store/app'
+import { useApp, statusForNode } from '../../store/app'
 import { ChapterRow, VolumeRow, type RowActions } from './outline/Rows'
 import { ChapterBriefModal } from './outline/ChapterBriefModal'
 import { GenOutlineModal } from './outline/GenOutlineModal'
@@ -17,6 +17,7 @@ export function OutlineTab(): ReactNode {
   const setActiveChapter = useApp((s) => s.setActiveChapter)
   const setTab = useApp((s) => s.setTab)
   const toast = useApp((s) => s.toast)
+  const patchOutlineStatus = useApp((s) => s.patchOutlineStatus)
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [genOpen, setGenOpen] = useState(false)
@@ -25,13 +26,19 @@ export function OutlineTab(): ReactNode {
   const outline = project?.outline ?? []
 
   const stat = useMemo(() => outlineStats(outline, countWords), [outline])
+  // 章 → 大纲节点：显式 outlineNodeId 优先，老数据按标题兜底匹配。
+  // 早先这里只认 outlineNodeId，而「建为章节」按标题新建时根本不写这个字段，
+  // 于是建完章大纲页仍然显示「建为章节」，两边对不上。
   const chapterMap = useMemo(() => {
     const map = new Map<string, Chapter>()
-    for (const c of project?.chapters ?? []) {
-      if (c.outlineNodeId) map.set(c.outlineNodeId, c)
+    if (!project) return map
+    const index = buildOutlineIndex(project.outline)
+    for (const c of project.chapters) {
+      const nodeId = resolveOutlineNodeId(c, index)
+      if (nodeId) map.set(nodeId, c)
     }
     return map
-  }, [project?.chapters])
+  }, [project?.chapters, project?.outline])
 
   if (!project) return null
 
@@ -44,7 +51,19 @@ export function OutlineTab(): ReactNode {
   }
 
   const actions: RowActions = {
-    onPatch: (id, patch) => writeOutline(updateNode(outline, id, patch)),
+    onPatch: (id, patch) => {
+      // 状态是「计划」，要走同步通道：只改大纲节点会让已建的那一章永远停在旧状态，
+      // 于是章节列表显示「撰写中」、大纲页显示「已完成」（本次要修的就是这个问题）
+      if (patch.status) {
+        patchOutlineStatus(id, patch.status)
+        const rest: Partial<OutlineNode> = { ...patch }
+        delete rest.status
+        if (!Object.keys(rest).length) return
+        writeOutline(updateNode(useApp.getState().project?.outline ?? outline, id, rest))
+        return
+      }
+      writeOutline(updateNode(outline, id, patch))
+    },
     onRemove: (id) => {
       writeOutline(removeNode(outline, id))
       toast('已删除该节点', 'info')
@@ -75,11 +94,17 @@ export function OutlineTab(): ReactNode {
         toast('新建章节失败', 'error')
         return
       }
+      // addChapter 已经按标题把新章挂到这一节点上了；这里再显式钉住 outlineNodeId，
+      // 免得同名章节在将来被兜底匹配错位
       patchProject((p) => ({
         ...p,
-        chapters: p.chapters.map((c) => (c.id === created.id ? { ...c, outlineNodeId: node.id } : c))
+        chapters: p.chapters.map((c) =>
+          c.id === created.id
+            ? { ...c, outlineNodeId: node.id, summary: c.summary || node.summary, status: statusForNode(node.status) }
+            : c
+        )
       }))
-      setTab('outline')
+      setTab('write')
       toast(`已建为章节「${created.title}」`, 'ok')
     },
     onOpenChapter: (chapter) => {

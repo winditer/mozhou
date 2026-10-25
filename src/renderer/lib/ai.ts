@@ -24,6 +24,17 @@ export interface AIResult {
   finishReason?: string
   /** 是否被截断的便捷判断 */
   truncated?: boolean
+  /**
+   * 这次流一个正文字符都没产出（主进程据 onDelta 是否真被调用过判定）。
+   *
+   * 为什么必须单独有这个字段而不是用 `text === ''` 去猜：推理模型会把 maxTokens
+   * 全花在 reasoning_content 上，正文空着就 stop，这时它既不报错、也不截断，
+   * 上层只看到空串，无从判断是「模型没写完」还是「模型没写」。
+   * 有了它，长度守护才能区分「重试」与「真的空」。
+   */
+  empty: boolean
+  /** 思考耗尽额度的典型组合：empty 且 finishReason === 'length' */
+  thoughtStarved?: boolean
 }
 
 const pending = new Map<string, Pending>()
@@ -44,7 +55,7 @@ function init(): void {
     p.thought += delta
     p.onThought?.(delta)
   })
-  mz.ai.onDone(({ streamId, promptTokens, completionTokens, finishReason }) => {
+  mz.ai.onDone(({ streamId, promptTokens, completionTokens, finishReason, empty }) => {
     const p = pending.get(streamId)
     if (!p) return
     pending.delete(streamId)
@@ -56,7 +67,10 @@ function init(): void {
       promptTokens: p.promptTokens,
       completionTokens: p.completionTokens,
       ms: 0,
-      finishReason
+      finishReason,
+      // 主进程说没吐字就信主进程；老版本主进程不带这个字段时退回看本地拼出来的文本
+      empty: empty ?? p.text.length === 0,
+      thoughtStarved: Boolean(empty) && finishReason === 'length'
     })
   })
   mz.ai.onError(({ streamId, message }) => {

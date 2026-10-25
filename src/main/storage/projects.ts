@@ -120,6 +120,17 @@ export async function countProjects(): Promise<number> {
 
 /* ───────────────────────── 兼容与自愈 ───────────────────────── */
 
+/**
+ * 章节状态的读盘归一。
+ * 1.3.0 及更早把章节状态写成 'planned'（和大纲节点同名），但章节自己的待写态
+ * 叫 'planning'——不迁的话，老书里每一章都会掉进「不认识的状态」显示成待写，
+ * 而改过一次状态之后又跳成撰写中，看起来像状态乱跳。
+ */
+function normalizeChapterStatus(raw: unknown): 'planning' | 'draft' | 'done' {
+  if (raw === 'draft' || raw === 'done') return raw
+  return 'planning'
+}
+
 function normalizeProject(p: Project): Project {
   const pf: Partial<Project> = p
   return {
@@ -167,7 +178,7 @@ function normalizeProject(p: Project): Project {
       ...c,
       versions: c.versions ?? [],
       summary: c.summary ?? '',
-      status: c.status ?? 'draft',
+      status: normalizeChapterStatus(c.status),
       targetWords: c.targetWords ?? 0,
       words: c.words || countWords(c.content ?? ''),
       createdAt: c.createdAt ?? Date.now(),

@@ -3,13 +3,14 @@ import type {
   AppSettings,
   Chapter,
   Config,
+  OutlineNode,
   Project,
   ProjectMeta,
   TaskKind
 } from '@shared/types'
 import { TASK_LABELS } from '@shared/types'
 import type { StyleLibrary } from '@shared/styleLibrary'
-import { countWords, uid } from '@shared/utils'
+import { countWords, outlineTitleKey, resolveOutlineNodeId, buildOutlineIndex, uid } from '@shared/utils'
 import { mz } from '../lib/bridge'
 
 /** 库载入失败时的兜底：空库仍然能工作（书里自建的分身照常生效），只是没有系统分身可选 */
@@ -73,6 +74,10 @@ interface AppState {
   patchChapter: (id: string, patch: Partial<Chapter>) => void
   removeChapter: (id: string) => void
   moveChapter: (from: number, to: number) => void
+  /** 手动切换章节状态（章节列表里的徽标，点击循环） */
+  cycleChapterStatus: (id: string) => void
+  /** 大纲节点的状态是计划；切换它要同时写回已建的那一章，否则两边立刻分叉 */
+  patchOutlineStatus: (nodeId: string, status: OutlineNode['status']) => void
 
   saveConfig: (next: Config) => Promise<void>
   patchSettings: (patch: Partial<AppSettings>) => Promise<void>
@@ -248,13 +253,16 @@ export const useApp = create<AppState>((set, get) => ({
   addChapter(title, atIndex) {
     const cur = get().project
     if (!cur) return null
+    // 标题默认「第 N 章」会伤到「按标题匹配大纲」：同一本书里重复的默认标题
+    // 会让人分不清哪一章对应大纲哪一节，所以取一个还没被用过的序号
+    const title0 = title?.trim() || nextChapterTitle(cur.chapters)
     const sceneDefault = cur.settings.targetWordsPerChapter || 2500
     const chapter: Chapter = {
       id: uid('c'),
-      title: title || `第 ${cur.chapters.length + 1} 章`,
+      title: title0,
       content: '',
       summary: '',
-      status: 'draft',
+      status: 'planning',
       targetWords: sceneDefault,
       words: 0,
       createdAt: Date.now(),
@@ -267,7 +275,7 @@ export const useApp = create<AppState>((set, get) => ({
     } else {
       chapters.push(chapter)
     }
-    get().patchProject((p) => ({ ...p, chapters }))
+    get().patchProject((p) => linkChapterToOutline({ ...p, chapters }, chapter.id))
     set({ activeChapterId: chapter.id, tab: 'write' })
     return chapter
   },
@@ -282,9 +290,34 @@ export const useApp = create<AppState>((set, get) => ({
           merged.words = countWords(patch.content)
           merged.versions = pushSnapshot(c.versions, prev, patch.content)
         }
+        // 正文从空变成非空：这一章就真的开写了，「待写」不该再留着。
+        // 唯一例外是作者刚从「已完成」倒推回来（改错字不该把完本打回进行中）。
+        if (patch.content !== undefined && patch.status === undefined && merged.words > 0 && merged.status === 'planning') {
+          merged.status = 'draft'
+        }
         return merged
       })
       return { ...p, chapters }
+    })
+  },
+
+  cycleChapterStatus(id) {
+    get().patchProject((p) => {
+      const target = p.chapters.find((c) => c.id === id)
+      if (!target) return p
+      return withChapterStatus(p, id, nextChapterStatus(target.status))
+    })
+  },
+
+  patchOutlineStatus(nodeId, status) {
+    get().patchProject((p) => {
+      const outline = updateOutlineStatus(p.outline, nodeId, status)
+      // 大纲节点对应的那一章同步改，两处读到的永远是同一个答案
+      const linked = chapterForNode(p, nodeId)
+      const chapters = linked
+        ? p.chapters.map((c) => (c.id === linked.id ? { ...c, status: status as Chapter['status'], updatedAt: Date.now() } : c))
+        : p.chapters
+      return { ...p, outline, chapters }
     })
   },
 
@@ -334,6 +367,129 @@ export const useApp = create<AppState>((set, get) => ({
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
   }
 }))
+
+/* ───────────────── 章节状态：单一事实来源 ─────────────────
+   章节和 outline 节点各有一个 status，但它们问的是两件事：
+
+   - OutlineNode.status = 作者在大纲页定的**计划**（planned → writing → done）
+   - Chapter.status     = 写作台里正文进度的**事实**
+
+   两边如果各改各的，同一章就会同时显示「待写」和「已完成」（章节列表读 A、
+   大纲页读 B）。这里的规矩是：**大纲节点的状态是计划，章节的状态是事实**——
+   大纲页改状态时同步写回已建的那一章，章节页改状态时同步写回所属节点，
+   只建了大纲没建章的那部分只提示计划，不假装有事实。 */
+
+const CHAPTER_TO_NODE_STATUS: Record<Chapter['status'], OutlineNode['status']> = {
+  planning: 'planned',
+  draft: 'writing',
+  done: 'done'
+}
+
+/** 大纲节点状态反推章节状态：进行中一律落到「撰写中」，不再区分有没有正文 */
+const NODE_TO_CHAPTER_STATUS: Record<OutlineNode['status'], Chapter['status']> = {
+  planned: 'planning',
+  writing: 'draft',
+  done: 'done'
+}
+
+/** 大纲节点的计划 → 章节的事实：建章时用它给新章一个与大纲一致的起点 */
+export function statusForNode(status: OutlineNode['status']): Chapter['status'] {
+  return NODE_TO_CHAPTER_STATUS[status]
+}
+
+/** 徽标点一下循环：待写 → 撰写中 → 已完成 → 待写 */
+export function nextChapterStatus(s: Chapter['status']): Chapter['status'] {
+  return s === 'planning' ? 'draft' : s === 'draft' ? 'done' : 'planning'
+}
+
+function updateOutlineStatus(nodes: OutlineNode[], id: string, status: OutlineNode['status']): OutlineNode[] {
+  return nodes.map((n) => {
+    if (n.id === id) return { ...n, status }
+    if (!n.children.length) return n
+    const children = updateOutlineStatus(n.children, id, status)
+    return children === n.children ? n : { ...n, children }
+  })
+}
+
+/** 找出章 → 大纲节点的映射（显式 id 优先，标题兜底），并保证一个节点只归属一章 */
+function chapterNodeMap(project: Project): Map<string, string> {
+  const index = buildOutlineIndex(project.outline)
+  const map = new Map<string, string>()
+  for (const c of project.chapters) {
+    const nodeId = resolveOutlineNodeId(c, index)
+    if (nodeId) map.set(c.id, nodeId)
+  }
+  return map
+}
+
+/** 某章当前挂在哪个大纲节点上 */
+export function nodeIdOfChapter(project: Project, chapterId: string): string | null {
+  return chapterNodeMap(project).get(chapterId) ?? null
+}
+
+/** 某个大纲节点已经建了哪一章 */
+export function chapterForNode(project: Project, nodeId: string): Chapter | null {
+  const map = chapterNodeMap(project)
+  for (const [chapterId, nid] of map) {
+    if (nid === nodeId) return project.chapters.find((c) => c.id === chapterId) ?? null
+  }
+  return null
+}
+
+/** 给新章节找它的 outline 节点，并把它写进 outlineNodeId（落盘，不再每次靠标题猜） */
+function linkChapterToOutline(project: Project, chapterId: string): Project {
+  const chapter = project.chapters.find((c) => c.id === chapterId)
+  if (!chapter || !project.outline.length) return project
+  const index = buildOutlineIndex(project.outline)
+  // 先把已有章节占位，避免新章抢走别人已经匹配上的节点
+  for (const c of project.chapters) {
+    if (c.id !== chapterId) resolveOutlineNodeId(c, index)
+  }
+  const nodeId = resolveOutlineNodeId(chapter, index)
+  if (!nodeId || nodeId === chapter.outlineNodeId) return project
+  return {
+    ...project,
+    chapters: project.chapters.map((c) => (c.id === chapterId ? { ...c, outlineNodeId: nodeId } : c))
+  }
+}
+
+/** 改章节状态时，同时把计划（大纲节点）拉齐 */
+function withChapterStatus(project: Project, chapterId: string, status: Chapter['status']): Project {
+  const chapters = project.chapters.map((c) => (c.id === chapterId ? { ...c, status, updatedAt: Date.now() } : c))
+  const nodeId = nodeIdOfChapter(project, chapterId)
+  if (!nodeId) return { ...project, chapters }
+  return {
+    ...project,
+    chapters,
+    outline: updateOutlineStatus(project.outline, nodeId, CHAPTER_TO_NODE_STATUS[status])
+  }
+}
+
+/** 「第 N 章」的自增序号：跳过已被占用的标题 */
+function nextChapterTitle(chapters: Chapter[]): string {
+  const used = new Set(chapters.map((c) => outlineTitleKey(c.title)))
+  for (let i = chapters.length + 1; i < chapters.length + 1000; i++) {
+    const t = `第 ${i} 章`
+    if (!used.has(outlineTitleKey(t))) return t
+  }
+  return `第 ${chapters.length + 1} 章`
+}
+
+/* ───────────────── 章节状态的显示口径 ─────────────────
+   章节列表和大纲页必须用同一套词。之前章节列表说「待写/撰写中/已完成」，
+   大纲页说「待写/进行中/已完成」，同一个中间态两个名字，作者会以为它们不是一回事。 */
+
+export const CHAPTER_STATUS_LABEL: Record<Chapter['status'], string> = {
+  planning: '待写',
+  draft: '撰写中',
+  done: '已完成'
+}
+
+export const CHAPTER_STATUS_COLOR: Record<Chapter['status'], { fg: string; bg: string }> = {
+  planning: { fg: 'var(--text-faint)', bg: 'var(--panel-2)' },
+  draft: { fg: 'var(--warn)', bg: 'var(--panel-2)' },
+  done: { fg: 'var(--ok)', bg: 'var(--panel-2)' }
+}
 
 /* ───────────────── 派生选择器 ───────────────── */
 

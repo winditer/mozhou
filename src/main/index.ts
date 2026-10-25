@@ -70,6 +70,13 @@ function createWindow(): void {
   if (shot) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
+        // 验收用：MOZHOU_SHOT_WIDTH 可在截图前把窗口改到指定宽度，
+        // 用来复现窄窗口下的布局问题（默认 1440，最小 1080）
+        const forcedW = Number(process.env['MOZHOU_SHOT_WIDTH'] ?? 0)
+        if (forcedW > 0 && mainWindow) {
+          mainWindow.setSize(forcedW, mainWindow.getSize()[1])
+          await new Promise((r) => setTimeout(r, 400))
+        }
         const js = process.env['MOZHOU_SHOT_JS']
         if (js) {
           try {

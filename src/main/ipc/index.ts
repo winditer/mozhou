@@ -147,7 +147,10 @@ export function registerIpc(): void {
           text: '',
           promptTokens: usage.promptTokens,
           completionTokens: usage.completionTokens,
-          finishReason: usage.finishReason
+          finishReason: usage.finishReason,
+          // 空正文不在这里报错，交给上层判断重试：只有渲染层知道目标字数和这次是不是首轮
+          empty: usage.empty,
+          finishedAbnormally: usage.finishedAbnormally
         })
       }
       return { ok: true }

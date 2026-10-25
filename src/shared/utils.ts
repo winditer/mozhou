@@ -41,6 +41,78 @@ export function countWords(input: string): number {
   return (cjk?.length ?? 0) + (latin?.length ?? 0)
 }
 
+/* ───────────────────── 章节 ↔ 大纲 的关联解析 ─────────────────────
+   章节和大纲是两份各自独立的记录，两边都带 status，但「以谁为准」必须只有一个答案：
+
+   - 大纲节点 status：作者在大纲页手动维护的**计划**（待写 → 进行中 → 已完成）。
+   - 章节 status：写作台里正文进度的**事实**（planning / draft / done）。
+
+   之前两处各读各的，同一章会在章节列表显示「待写」、在大纲页显示「已完成」，
+   而且「建为章节」按标题新建是死路——作者最顺手的顺序是「先手打大纲、再手建章节」，
+   两者标题一致却没有任何关联，状态立刻分叉。这里统一成一条链：
+   章节 → outlineNodeId（主）→ 标题归一后匹配（兜底，兼容老数据）。 */
+
+/** 标题归一：去掉序号、装饰、空白，用来做「同一章」的兜底匹配 */
+export function outlineTitleKey(title: string): string {
+  return (title ?? '')
+    .replace(/^[\s\u3000]+/, '')
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/^[-*•·]+/, '')
+    .replace(/^第\s*[0-9０-９零〇一二三四五六七八九十百千两]+\s*[卷部篇章节回折幕场集镜案条段]\s*/, '')
+    .replace(/^\d{1,3}\s*[.、)．]\s*/, '')
+    .replace(/[《》〈〉"'“”‘’]/g, '')
+    .replace(/[\s\u3000·、，,：:．.！!？?；;—\-]+/g, '')
+    .trim()
+}
+
+export interface OutlineIndex {
+  /** 大纲节点 id → 是否已建章 */
+  byId: Map<string, boolean>
+  /** 归一标题 → 大纲节点 id（重名时保留先出现的那个） */
+  byTitle: Map<string, string>
+  /** 已建章的大纲节点 id：一个节点只归属一章，后建的不抢 */
+  taken: Set<string>
+}
+
+export function buildOutlineIndex(outline: { id: string; title: string; children: any[] }[]): OutlineIndex {
+  const byId = new Map<string, boolean>()
+  const byTitle = new Map<string, string>()
+  const walk = (list: { id: string; title: string; children: any[] }[]): void => {
+    for (const n of list) {
+      byId.set(n.id, false)
+      const key = outlineTitleKey(n.title)
+      if (key && !byTitle.has(key)) byTitle.set(key, n.id)
+      walk(n.children ?? [])
+    }
+  }
+  walk(outline)
+  return { byId, byTitle, taken: new Set() }
+}
+
+/**
+ * 把一章挂到它的大纲节点上。显式 outlineNodeId 优先；没有就按标题兜底匹配。
+ * 传入了 index 时会把命中的节点登记为「已占用」，保证一章只认一处、后建的不抢前面的。
+ */
+export function resolveOutlineNodeId(
+  chapter: { id: string; title: string; outlineNodeId?: string },
+  index: OutlineIndex
+): string | null {
+  const explicit = chapter.outlineNodeId
+  if (explicit && index.byId.has(explicit) && !index.taken.has(explicit)) {
+    index.taken.add(explicit)
+    index.byId.set(explicit, true)
+    return explicit
+  }
+  const key = outlineTitleKey(chapter.title)
+  const hit = key ? index.byTitle.get(key) : undefined
+  if (hit && !index.taken.has(hit)) {
+    index.taken.add(hit)
+    index.byId.set(hit, true)
+    return hit
+  }
+  return null
+}
+
 export function formatNumber(n: number): string {
   if (n >= 100_000_000) return (n / 100_000_000).toFixed(2).replace(/\.?0+$/, '') + ' 亿'
   if (n >= 10_000) return (n / 10_000).toFixed(1).replace(/\.0$/, '') + ' 万'

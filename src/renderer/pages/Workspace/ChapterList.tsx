@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import type { Project } from '@shared/types'
 import { formatNumber } from '@shared/utils'
-import { useApp } from '../../store/app'
+import { useApp, CHAPTER_STATUS_COLOR, CHAPTER_STATUS_LABEL } from '../../store/app'
 import { ChapterHistory } from './ChapterHistory'
 import { IconButton } from '../../components/ui'
 import { FileText, History, NotebookPen, Plus, Trash2 } from 'lucide-react'
@@ -14,7 +14,7 @@ export function ChapterList({
   /** 打开「本章梗概」查看/编辑弹窗 */
   onEditSummary: (chapterId: string) => void
 }): ReactNode {
-  const { activeChapterId, setActiveChapter, addChapter, patchChapter, removeChapter, toast } = useApp()
+  const { activeChapterId, setActiveChapter, addChapter, patchChapter, removeChapter, cycleChapterStatus, toast } = useApp()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
@@ -109,15 +109,21 @@ export function ChapterList({
                 <span className="text-[10.5px]" style={{ color: 'var(--text-faint)' }}>
                   {formatNumber(c.words)} 字
                 </span>
-                <span
+                <button
                   className="text-[10px] px-1 rounded"
                   style={{
-                    color: c.status === 'done' ? 'var(--ok)' : c.status === 'draft' ? 'var(--warn)' : 'var(--text-faint)',
-                    background: 'var(--panel-2)'
+                    color: CHAPTER_STATUS_COLOR[c.status].fg,
+                    background: CHAPTER_STATUS_COLOR[c.status].bg,
+                    border: `1px solid ${c.status === 'draft' ? 'transparent' : 'var(--border)'}`
+                  }}
+                  title="点击切换状态：待写 → 撰写中 → 已完成"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    cycleChapterStatus(c.id)
                   }}
                 >
-                  {c.status === 'done' ? '已完成' : c.status === 'draft' ? '撰写中' : '待写'}
-                </span>
+                  {CHAPTER_STATUS_LABEL[c.status]}
+                </button>
               </div>
               {(() => {
                 const sm = (project.summaries[c.id] || c.summary || '').trim()

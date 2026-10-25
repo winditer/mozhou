@@ -9,7 +9,8 @@
  * - 流式必须加 `:streamGenerateContent?alt=sse`，事件里 text 可能被拆成多个 part
  */
 import type { Channel, PromptMessage } from '@shared/types'
-import { HttpStatusError, parseSSE } from './sse'
+import type { StreamHandle } from './sse'
+import { HttpStatusError, openEventStream, parseSSE } from './sse'
 
 export interface StreamAdapterArgs {
   channel: Channel
@@ -24,6 +25,13 @@ export interface StreamAdapterArgs {
   onThought?: (d: string) => void
   /** 任意进展信号（响应头、SSE 事件） */
   onActivity: () => void
+  /**
+   * 流收尾异常（没有任何 candidate 帧就 EOF）时的提示。
+   * 适配器不抛错：半截正文对写作仍有价值，抛错会让上层把已经拿到的字丢掉。
+   */
+  onAbnormalEnd?: (reason: string) => void
+  /** 把打开的流交给 registry，由它保证请求结束后连接一定被关掉 */
+  onStream?: (handle: StreamHandle) => StreamHandle
 }
 
 const DEFAULT_BASE = 'https://generativelanguage.googleapis.com/v1beta'
@@ -51,7 +59,8 @@ interface GeminiTurn {
 }
 
 export async function streamGemini(args: StreamAdapterArgs): Promise<{ promptTokens: number; completionTokens: number; finishReason?: string }> {
-  const { channel, apiKey, model, messages, temperature, maxTokens, signal, onDelta, onThought, onActivity } = args
+  const { channel, apiKey, model, messages, temperature, maxTokens, signal, onDelta, onThought, onActivity, onAbnormalEnd } = args
+  const takeStream = args.onStream ?? ((s: StreamHandle): StreamHandle => s)
 
   const base = (channel.baseUrl.trim() || DEFAULT_BASE).replace(/\/+$/, '')
   const modelId = model.trim().replace(/^models\//, '') // 允许传 models/xxx 的写法
@@ -85,42 +94,34 @@ export async function streamGemini(args: StreamAdapterArgs): Promise<{ promptTok
     ...(channel.headers ?? {})
   }
 
-  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
-  if (!res.ok) throw new HttpStatusError(res.status, await res.text()) // 400/403 常见于 Key 无效
+  // 走 undici 而不是 fetch：空闲计时器 abort 时 fetch 的 body 会把最后一帧一起丢掉
+  const res = await openEventStream(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
+  if (res.status < 200 || res.status >= 300) throw new HttpStatusError(res.status, res.errorBody ?? '') // 400/403 常见于 Key 无效
   onActivity() // 已经拿到响应头，说明连接是通的
-  if (!res.body) throw new Error('模型返回了空响应（无响应体）')
 
   let promptTokens: number | undefined
   let completionTokens: number | undefined
   let output = ''
   /** finishReason 归一成与 OpenAI 一致：'length' 表示截断 */
   let finishReason: string | undefined
+  /** 见过 candidate 帧即视为收到了服务端的正式内容（哪怕只有一个字都没有的尾帧） */
+  let sawCandidate = false
+  /** 被安全策略等拦下的原因：正文为空时要能区分「模型不想写」和「模型没来得及写」 */
+  let blockedReason: string | undefined
 
-  for await (const ev of parseSSE(res.body)) {
-    onActivity() // 心跳也算进展
-    const data = ev.data.trim()
-    if (!data) continue
-    if (data === '[DONE]') break
-
-    let json: unknown
-    try {
-      json = JSON.parse(data) as unknown
-    } catch {
-      continue
-    }
-    const root = asRecord(json)
-    if (!root) continue
-
+  /** 逐帧取值。SSE 与「整段 JSON」两条路共用，避免出现两套解析规则 */
+  const applyFrame = (root: Record<string, unknown>): void => {
     const errPayload = asRecord(root.error)
     if (errPayload) throw new Error(str(errPayload.message) ?? '模型返回错误')
 
     const candidates = root.candidates
     if (Array.isArray(candidates) && candidates.length > 0) {
+      sawCandidate = true
       // finishReason 为 MAX_TOKENS 时说明被截断
-      const fr = str(asRecord(candidates[0])?.finishReason)
+      const cand = asRecord(candidates[0])
+      const fr = str(cand?.finishReason)
       if (fr) finishReason = fr === 'MAX_TOKENS' ? 'length' : fr
-      const content = asRecord(asRecord(candidates[0])?.content)
-      const parts = content?.parts
+      const parts = cand?.content ? asRecord(cand.content)?.parts : undefined
       if (Array.isArray(parts)) {
         for (const part of parts) {
           const rec = asRecord(part)
@@ -146,14 +147,67 @@ export async function streamGemini(args: StreamAdapterArgs): Promise<{ promptTok
       if (c !== undefined) completionTokens = c
     }
 
-    // 内容安全策略拦截：没有任何正文时直接给明确错误
     const blockReason = str(asRecord(root.promptFeedback)?.blockReason)
-    if (blockReason && !output) throw new Error(`请求被内容安全策略拦截（${blockReason}），请调整提示词后重试`)
+    if (blockReason) blockedReason = blockReason
   }
 
-  return {
-    promptTokens: promptTokens ?? estimateTokens(messages.map((m) => m.content).join('')),
-    completionTokens: completionTokens ?? estimateTokens(output),
-    finishReason
+  const summarize = (): { promptTokens: number; completionTokens: number; finishReason?: string } => {
+    // 内容安全策略拦截：没有任何正文时直接给明确错误。
+    // 放在最后判定：Gemini 会把 blockReason 和普通 candidate 放在同一批帧里，
+    // 曾经一出 blockReason 就抛错，把同一响应里已经生成的正文整段丢了。
+    if (blockedReason && !output) throw new Error(`请求被内容安全策略拦截（${blockedReason}），请调整提示词后重试`)
+    return {
+      promptTokens: promptTokens ?? estimateTokens(messages.map((m) => m.content).join('')),
+      completionTokens: completionTokens ?? estimateTokens(output),
+      finishReason
+    }
   }
+
+  // Gemini 没加 ?alt=sse 时会一次性返回 JSON 数组；也有的代理按 JSON 返回，这里整段读
+  if (!res.stream) {
+    const text = res.text ?? ''
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text.trim().replace(/^\s*\[/, '[').replace(/\]\s*$/, ']')) as unknown
+    } catch {
+      throw new Error('模型返回了无法解析的响应（既不是 SSE 流，也不是标准的 generateContent 结构）')
+    }
+    const frames: Record<string, unknown>[] = Array.isArray(parsed)
+      ? parsed.map((f) => asRecord(f)).filter((f): f is Record<string, unknown> => Boolean(f))
+      : [asRecord(parsed)].filter((f): f is Record<string, unknown> => Boolean(f))
+    if (frames.length === 0) throw new Error('模型返回了空响应（无任何内容帧）')
+    for (const frame of frames) applyFrame(frame)
+    return summarize()
+  }
+
+  const handle = takeStream(res.stream)
+  /** 收到 [DONE] 才算服务端主动收尾；Gemini 原生不给 [DONE]，靠 finishReason 判断 */
+  let sawDone = false
+
+  for await (const ev of parseSSE(handle.body)) {
+    onActivity() // 心跳也算进展
+    const data = ev.data.trim()
+    if (!data) continue
+    if (data === '[DONE]') {
+      sawDone = true
+      break
+    }
+
+    let json: unknown
+    try {
+      json = JSON.parse(data) as unknown
+    } catch {
+      continue
+    }
+    const root = asRecord(json)
+    if (!root) continue
+    applyFrame(root)
+  }
+
+  if (!sawDone && !finishReason) {
+    // Gemini 正常收尾一定带 finishReason；没有就是被掐断了
+    onAbnormalEnd?.(sawCandidate ? 'stream ended without finishReason' : 'stream ended without any candidate')
+  }
+
+  return summarize()
 }

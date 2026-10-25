@@ -144,6 +144,78 @@ function sliceBalanced(s: string, open: '[' | '{', close: ']' | '}'): string | n
   return null
 }
 
+/**
+ * 把一段「被 max_tokens 截断在半路」的对象补全成可解析的 JSON。
+ *
+ * 为什么必须有这一步：体检的输出是 3–12 条问题组成的数组，额度一旦不够，
+ * 模型会在**最后一个问题写到一半**时被硬切断。完整对象能被 salvageObjects 救回来，
+ * 但正在写的那个永远闭合不了、被直接丢弃——如果切在第一 条中间（额度特别紧时常发生），
+ * 结果就是「零条」，界面上表现为「体检跑完了但什么都没有」。
+ *
+ * 做法：先按 JSON 字符串状态机截到最后一个完整的「成员值」，再补齐缺的引号与括号。
+ * 补出来的这条通常仍有 title/detail 可读，比整条丢掉有用得多。
+ */
+function completeTruncatedObject(piece: string): Record<string, unknown> | null {
+  let depth = 0
+  let inStr = false
+  let esc = false
+  // 记住「最后一个可以安全截断的位置」：只有处于对象内部、且不在字符串里时才算
+  let lastSafe = -1
+  for (let i = 0; i < piece.length; i++) {
+    const c = piece.charAt(i)
+    if (inStr) {
+      if (esc) esc = false
+      else if (c === '\\') esc = true
+      else if (c === '"') {
+        inStr = false
+        lastSafe = i + 1
+      }
+      continue
+    }
+    if (c === '"') {
+      inStr = true
+      continue
+    }
+    if (c === '{' || c === '[') depth++
+    else if (c === '}' || c === ']') {
+      depth--
+      lastSafe = i + 1
+    } else if (c === ',') lastSafe = i
+    else if (c !== ' ' && c !== '\n' && c !== '\r' && c !== '\t' && c !== ':') lastSafe = i + 1
+  }
+
+  // 逐个候选截断点往回退，找到第一个能补成合法 JSON 的
+  for (let cut = lastSafe; cut > 1; cut--) {
+    let head = piece.slice(0, cut).replace(/,\s*$/, '')
+    if (!head.startsWith('{')) continue
+    // 清掉尾部悬挂的 "key":（没有值的情况）
+    head = head.replace(/,\s*"[^"]*"\s*:\s*$/, '').replace(/"[^"]*"\s*:\s*$/, '')
+    if (head.length < 3) continue
+    // 补齐未闭合的字符串与花括号
+    let needQuote = false
+    let quoteEsc = false
+    let str = false
+    let braces = 0
+    for (let i = 0; i < head.length; i++) {
+      const c = head.charAt(i)
+      if (str) {
+        if (quoteEsc) quoteEsc = false
+        else if (c === '\\') quoteEsc = true
+        else if (c === '"') str = false
+        continue
+      }
+      if (c === '"') str = true
+      else if (c === '{') braces++
+      else if (c === '}') braces--
+    }
+    needQuote = str
+    const tail = (needQuote ? '"' : '') + '}'.repeat(Math.max(0, braces))
+    const parsed = asRecord(tryParse(head + tail))
+    if (parsed) return parsed
+  }
+  return null
+}
+
 /** 输出被截断时的兜底：把已经写完的 {...} 一个个抠出来 */
 function salvageObjects(s: string): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
@@ -176,7 +248,12 @@ function salvageObjects(s: string): Record<string, unknown>[] {
         }
       }
     }
-    if (end < 0) break
+    if (end < 0) {
+      // 截断在对象中间：把这条写了一半的也抢救出来，别整条丢掉
+      const rescued = completeTruncatedObject(s.slice(start))
+      if (rescued) out.push(rescued)
+      break
+    }
     const piece = s.slice(start, end + 1)
     const parsed = asRecord(tryParse(piece))
     if (parsed) out.push(parsed)
@@ -481,6 +558,16 @@ export function parseChapterReport(
   const hasAnyScore =
     scores.rhythm > 0 || scores.conflict > 0 || scores.suspense > 0 || scores.water > 0
   if (!obj && !hasAnyScore && !comment) {
+    // 模型常常无视 JSON 要求、直接回一段分析文字。那种文字里其实已经有评价，
+    // 尽力兜住，比让作者面对「解析失败」重跑一次更好。
+    const salvaged = salvageChapterProse(raw)
+    if (salvaged) {
+      return {
+        ok: true,
+        value: { scores: salvaged.scores, comment: salvaged.comment, issues: [] },
+        note: '模型没有输出 JSON，已从文字里尽量还原评分与评语'
+      }
+    }
     return { ok: false, raw, note: '既没有解析出评分，也没有评语' }
   }
 
@@ -497,6 +584,68 @@ export function parseChapterReport(
       issues: sortIssues(issues)
     }
   }
+}
+
+/**
+ * 从「模型没按格式走」的散文里尽量救回可用结果。
+ *
+ * 真实遇到的情况：模型无视 JSON 要求，直接回了一段分析文字——
+ * 「这一章的节奏整体偏慢，前半段环境描写过多……冲突方面，主角的动机不够明确……」
+ * 这时如果只报「解析失败」，作者拿不到任何东西，只能重跑或换模型；
+ * 但那句话里其实已经点出了节奏慢、冲突弱，是有信息量的。
+ *
+ * 所以这里做两件事：从散文里抠四维评分的线索词，并把分析文字当作评语。
+ * 分数只在能从文字判断出好坏时才给，判断不出就留 0（表示未评）
+ * ——宁可显示「未评」，也不凭空编一个数字骗人。
+ */
+export function salvageChapterProse(raw: string): { scores: ChapterScores; comment: string } | null {
+  const text = String(raw || '').trim()
+  // 太短的多半是模型发呆或报错，不像分析
+  if (text.length < 12) return null
+  // 已经能解析出 JSON 的就不用走这条路
+  if (/^\s*[{[]/.test(text) && text.length > 2 && tryParse(text)) return null
+
+  const NEG = /(偏慢|太慢|拖|拖沓|冗长|泄了气|弱|不够|不足|平淡|缺乏|散|水|凑字数|重复|没推进|停滞)/g
+  const POS = /(紧凑|扎实|有力|清晰|到位|强|饱满|抓人|有钩子|有效|不错|很好)/g
+
+  /** 反向指标换算：好评（70）在注水上意味着「水分少」，应映射成低分 */
+  const invertScore = (v: number): number => (v === 0 ? 0 : 100 - v)
+
+  /** 找出某个维度在文中的描述句，判断它是好评还是差评 */
+  const scoreOf = (keys: string[]): number => {
+    for (const k of keys) {
+      const i = text.indexOf(k)
+      if (i < 0) continue
+      // 取关键词前后一个窗口，看评价倾向
+      const win = text.slice(Math.max(0, i - 30), Math.min(text.length, i + 60))
+      // 「几乎不注水」「没有水分」是否定式好评：关键词前面紧挨着否定词，
+      // 不能因为窗口里出现「不」就当成差评。
+      const before = text.slice(Math.max(0, i - 4), i)
+      const negated = /(几乎不|没有|不怎么|不|无|没)$/.test(before)
+      const neg = (win.match(NEG) || []).length
+      const pos = (win.match(POS) || []).length
+      if (negated && !pos) return 70
+      if (!neg && !pos) continue
+      // 明确说「好」「够」给及格以上，明确说差给不及格，都没提就不评
+      if (neg > pos) return 40
+      if (pos > neg) return 70
+      return 55
+    }
+    // 退一步：整段文字里如果只出现了某维度的负向词，也算弱
+    return 0
+  }
+
+  const scores: ChapterScores = {
+    rhythm: scoreOf(['节奏']),
+    conflict: scoreOf(['冲突', '对抗', '张力']),
+    suspense: scoreOf(['悬念', '钩子']),
+    // 注水是**反向指标**：越高越糟。说「不注水/几乎不注水」是好话，要给低分。
+    water: invertScore(scoreOf(['注水', '水分', '凑字数']))
+  }
+
+  const hasAny = scores.rhythm || scores.conflict || scores.suspense || scores.water
+  if (!hasAny) return null
+  return { scores, comment: text.slice(0, 600) }
 }
 
 export function parseThreadSuggestions(raw: string, project: Project): ParseOutcome<ThreadSuggestion[]> {

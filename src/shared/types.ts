@@ -220,9 +220,14 @@ export interface Chapter {
   title: string
   content: string
   summary: string
-  status: 'planned' | 'draft' | 'done'
+  /**
+   * 正文进度的事实：planning 待写 / draft 撰写中 / done 已完成。
+   * 与 OutlineNode.status（作者定的计划）一一对应，写 store 时互相同步。
+   */
+  status: 'planning' | 'draft' | 'done'
   targetWords: number
   words: number
+  /** 关联的大纲节点。缺失时按标题兜底匹配（兼容老数据） */
   outlineNodeId?: string
   createdAt: number
   updatedAt: number
@@ -362,6 +367,15 @@ export interface StreamDone {
    * 上层据此判断「文字是断的」，而不是把半截内容当成品。
    */
   finishReason?: string
+  /**
+   * 本次流一个正文字符都没产出（思考吃光 max_tokens、网关吞掉 content 等）。
+   *
+   * 刻意不在这里抛错：空正文往往换个提示词/重试就能出字，抛错会被上层当致命失败
+   * 直接终结整个生成流程。上层据 empty + finishReason 自己决定要不要重试。
+   */
+  empty: boolean
+  /** 流收尾异常（没等到 [DONE] 就断）。仅作排查线索，不参与重试判断 */
+  finishedAbnormally?: boolean
 }
 
 export interface StreamError {

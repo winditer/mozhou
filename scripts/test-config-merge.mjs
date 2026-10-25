@@ -36,6 +36,15 @@ function check(name, cond, extra) {
   }
 }
 
+/**
+ * audit.book 的出厂额度。
+ *
+ * 从默认表里现取而不是写死数字：这个值会随需求调整（体检输出是 JSON，
+ * 条数多，2600 装不下），写死的话每次调预算都要回来改一遍测试，
+ * 而测试真正要钉住的是「坏配置落回默认」，不是某个具体数字。
+ */
+const AUDIT_BOOK = DEFAULT_SETTINGS.tokenBudgets['audit.book'].tokens
+
 const keysOf = (b) => (b && typeof b === 'object' ? Object.keys(b) : [])
 const budgetOf = (s, key) => s?.tokenBudgets?.[key]
 
@@ -67,7 +76,7 @@ console.log('单点覆盖不影响其它 key')
   const s = mergeSettings({ tokenBudgets: { 'summary.auto': { kind: 'fixed', tokens: 1234 } } })
   check('summary.auto 用用户值 1234', budgetOf(s, 'summary.auto')?.tokens === 1234, JSON.stringify(budgetOf(s, 'summary.auto')))
   check('summary.auto 仍是 fixed', budgetOf(s, 'summary.auto')?.kind === 'fixed', budgetOf(s, 'summary.auto')?.kind)
-  check('audit.book 仍默认 2600', budgetOf(s, 'audit.book')?.tokens === 2600, JSON.stringify(budgetOf(s, 'audit.book')))
+  check('audit.book 仍默认 6000', budgetOf(s, 'audit.book')?.tokens === 6000, JSON.stringify(budgetOf(s, 'audit.book')))
   check('按字数的 key 仍默认参数',
     JSON.stringify(budgetOf(s, 'draft.generate')) === JSON.stringify({ kind: 'perWord', perWord: 2.2, thinkPad: 1024, min: 2048, max: 16000 }),
     JSON.stringify(budgetOf(s, 'draft.generate')))
@@ -124,7 +133,7 @@ console.log('结构坏的条目回落默认')
   ]
   for (const [label, value] of MALFORMED) {
     const s = mergeSettings({ tokenBudgets: { 'audit.book': value } })
-    check(`${label} → 回落默认 2600`, budgetOf(s, 'audit.book')?.tokens === 2600, JSON.stringify(budgetOf(s, 'audit.book')))
+    check(`${label} → 回落默认 6000`, budgetOf(s, 'audit.book')?.tokens === 6000, JSON.stringify(budgetOf(s, 'audit.book')))
     check(`${label} → 仍是 fixed`, budgetOf(s, 'audit.book')?.kind === 'fixed', JSON.stringify(budgetOf(s, 'audit.book')))
   }
   // 脏数据连累不到邻居
@@ -136,7 +145,7 @@ console.log('结构坏的条目回落默认')
   for (const bad of [null, 'garbage', 42, []]) {
     const r = mergeSettings({ tokenBudgets: bad })
     check(`tokenBudgets 是 ${JSON.stringify(bad)} 也补齐 24 个`, keysOf(r.tokenBudgets).length === 24, `实际 ${keysOf(r.tokenBudgets).length}`)
-    check(`tokenBudgets 是 ${JSON.stringify(bad)} 时 audit.book 默认`, budgetOf(r, 'audit.book')?.tokens === 2600)
+    check(`tokenBudgets 是 ${JSON.stringify(bad)} 时 audit.book 默认`, budgetOf(r, 'audit.book')?.tokens === AUDIT_BOOK)
   }
 }
 
@@ -147,7 +156,7 @@ console.log('越界只夹取，不换默认值')
 {
   const s = mergeSettings({ tokenBudgets: { 'audit.book': { kind: 'fixed', tokens: 999999 } } })
   check('999999 → 夹到 32768', budgetOf(s, 'audit.book')?.tokens === 32768, JSON.stringify(budgetOf(s, 'audit.book')))
-  check('没被换成默认 2600', budgetOf(s, 'audit.book')?.tokens !== 2600, JSON.stringify(budgetOf(s, 'audit.book')))
+  check('没被换成默认值', budgetOf(s, 'audit.book')?.tokens !== AUDIT_BOOK, JSON.stringify(budgetOf(s, 'audit.book')))
 
   const zero = mergeSettings({ tokenBudgets: { 'audit.book': { kind: 'fixed', tokens: 0 } } })
   check('0 → 夹到 1', budgetOf(zero, 'audit.book')?.tokens === 1, JSON.stringify(budgetOf(zero, 'audit.book')))
@@ -190,7 +199,7 @@ console.log('脏键与副作用')
   a.tokenBudgets['audit.book'] = { kind: 'fixed', tokens: 111 }
   a.typography.fontSize = 99
   check('两次合并的结果互不影响',
-    mergeSettings({}).tokenBudgets['audit.book'].tokens === 2600 && mergeSettings({}).typography.fontSize === 17)
+    mergeSettings({}).tokenBudgets['audit.book'].tokens === AUDIT_BOOK && mergeSettings({}).typography.fontSize === 17)
   // 也不能直接引用默认表，否则改一份设置会污染全局默认
   check('预算表不是默认表的同一个对象', mergeSettings({}).tokenBudgets !== DEFAULT_SETTINGS.tokenBudgets)
   check('排版不是默认表的同一个对象', mergeSettings({}).typography !== DEFAULT_SETTINGS.typography)
@@ -213,7 +222,7 @@ console.log('脏键与副作用')
     JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['draft.generate']) === beforePerWord,
     JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['draft.generate']))
   check('污染后再次 mergeSettings 仍得默认值',
-    mergeSettings({}).tokenBudgets['audit.book'].tokens === 2600,
+    mergeSettings({}).tokenBudgets['audit.book'].tokens === AUDIT_BOOK,
     mergeSettings({}).tokenBudgets['audit.book'].tokens)
   check('污染后 perWord 预设仍是 2.2',
     mergeSettings({}).tokenBudgets['draft.generate'].perWord === 2.2,
@@ -223,7 +232,7 @@ console.log('脏键与副作用')
   const malformed = mergeSettings({ tokenBudgets: { 'audit.book': 'garbage' } })
   malformed.tokenBudgets['audit.book'].tokens = 7
   check('坏数据回落的对象也不与默认表同引用',
-    DEFAULT_SETTINGS.tokenBudgets['audit.book'].tokens === 2600,
+    DEFAULT_SETTINGS.tokenBudgets['audit.book'].tokens === AUDIT_BOOK,
     JSON.stringify(DEFAULT_SETTINGS.tokenBudgets['audit.book']))
 
   const fresh = mergeSettings({})
@@ -275,7 +284,7 @@ console.log('默认设置与改造前一致')
   check('showWordCountBar true', DEFAULT_SETTINGS.showWordCountBar === true)
   check('firstRunDone false', DEFAULT_SETTINGS.firstRunDone === false)
   check('默认带 24 个预算', keysOf(DEFAULT_SETTINGS.tokenBudgets).length === 24, `实际 ${keysOf(DEFAULT_SETTINGS.tokenBudgets).length}`)
-  check('默认预算就是 DEFAULT_TOKEN_BUDGETS', DEFAULT_SETTINGS.tokenBudgets === undefined ? false : DEFAULT_SETTINGS.tokenBudgets['audit.book'].tokens === 2600)
+  check('默认预算就是 DEFAULT_TOKEN_BUDGETS', DEFAULT_SETTINGS.tokenBudgets === undefined ? false : DEFAULT_SETTINGS.tokenBudgets['audit.book'].tokens === AUDIT_BOOK)
 }
 
 console.log(`\n${pass} 通过, ${fail} 失败`)

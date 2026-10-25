@@ -273,11 +273,20 @@ console.log('generateDraft · 续写轮用 draft.continue')
     CAPTURED[1]?.maxTokens === DISTINCT_CONTINUE,
     `实际 ${CAPTURED[1]?.maxTokens}`
   )
-  // 续写请求必须带上「已经写了的内容」，否则模型会从头重写
+  // 续写请求必须带上「已经写了的内容」，否则模型会从头重写。
+  //
+  // 注意它现在放在 user 消息里而不是 assistant 轮：早前把已写正文作为 assistant
+  // 消息喂回去，模型会顺着**自己刚写的结尾**继续「续写」，于是补写越补越水、
+  // 情节反复。改成 user 消息 + 明确的「只补差额」指令后，正文只作为材料出现。
   const contMessages = CAPTURED[1]?.messages ?? []
   check(
     '续写请求里带上了首轮正文',
-    contMessages.some((m) => m.role === 'assistant' && m.content === '他推开门。'),
+    contMessages.some((m) => m.role === 'user' && m.content.includes('他推开门。')),
+    JSON.stringify(contMessages.map((m) => m.role))
+  )
+  check(
+    '续写请求不再把正文塞成 assistant 轮（避免模型自己续自己）',
+    !contMessages.some((m) => m.role === 'assistant'),
     JSON.stringify(contMessages.map((m) => m.role))
   )
   check('返回文本非空', typeof text === 'string' && text.length > 0)

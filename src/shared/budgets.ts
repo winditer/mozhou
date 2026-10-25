@@ -126,9 +126,14 @@ export const DEFAULT_TOKEN_BUDGETS: TokenBudgets = {
 
   'summary.auto': fixed(600),
   'summary.audit': fixed(700),
-  'audit.book': fixed(2600),
-  'audit.chapter': fixed(2200),
-  'audit.thread': fixed(2000),
+  // 体检类的输出是 JSON 结构体，比同字数的中文散文费 token 得多：每条问题含
+  // level/type/title/detail/evidence/chapterIds/suggestion 七个字段，中文一个字约占
+  // 1~1.5 token，一条中等长度的问题就要 200+ token。提示词又明确要求「共 3–12 条」，
+  // 2600 装不下 12 条，模型会在写到一半时被硬截断——这正是「体检跑完却什么都没看到」
+  // 的主因。给足到能容纳上限条数，宁可多花一点也不要交回一份残缺的 JSON。
+  'audit.book': fixed(6000),
+  'audit.chapter': fixed(4000),
+  'audit.thread': fixed(3600),
   'margin.notes': fixed(1500),
   'naming.ideas': fixed(900),
   'style.traits': fixed(700),
@@ -203,11 +208,54 @@ function isWellFormed(budget: unknown): budget is TokenBudget {
 }
 
 /**
+ * 这次「要写出来的字」与「一共能吐多少字」的差额。
+ *
+ * 为什么要有这个数：maxTokens 是**整次回复**的总输出额度，思考 token 和正文 token
+ * 共用它。而长度守护的补写轮面对的从来不是「再写一整章」，是「还差多少」。
+ * 早前补写轮拿「还差多少字」当 targetWords 递进 resolveBudget，按字数预算的下限
+ * 是 2048 token，于是越补给的额度越多、越补越不划算；换成「整章目标」当字数时，
+ * 章节写到 1 万字时上限（16000）又够不着。单独把这个差额暴露出来，让调用点
+ * 能说清「这是补写，请按差额给」而不用去猜哪一路进了哪个分支。
+ */
+export interface BudgetHeadroom {
+  /** 目标字数 */
+  targetWords: number
+  /** 本次之前已经写出来的字数（首轮传 0） */
+  writtenWords: number
+  /** 还差多少字；已经达到或超过目标时为 0 */
+  remainingWords: number
+  /**
+   * 已经写出来的字占这次总输出的比例上限。
+   * 总额度里要抠出这一块——已经吐出去的 token 不会再吐第二遍，
+   * 但账本上得留出位置，否则「整章目标 × perWord」会把上限顶穿。
+   */
+  writtenRatio: number
+}
+
+/**
+ * 把「已写字数」换算成这次还需要预留的整章比例。
+ *
+ * 中文一字约 0.75–1.5 token，perWord 已经留了余量，所以这里不做 token 换算，
+ * 只做字数比例——预算里要关心的不是绝对 token 数，而是「这次请求的总盘子够不够容纳
+ * 已经写出来的部分 + 还要写的部分」。上限 0.9 是防呆：已经写了 100 字但目标只有 100 字，
+ * 不该把整份预算都判给「已写」而让正文没额度可用。
+ */
+export function budgetHeadroom(targetWords: number, writtenWords: number): BudgetHeadroom {
+  const target = finiteOr(targetWords, 0)
+  const written = Math.max(0, finiteOr(writtenWords, 0))
+  const remaining = Math.max(0, target - written)
+  const writtenRatio = target > 0 ? Math.min(0.9, written / target) : 0
+  return { targetWords: target, writtenWords: written, remainingWords: remaining, writtenRatio }
+}
+
+/**
  * 算出某个调用点这次该给多少输出预算。
  *
  * - fixed：直接给配置的 token 数。
  * - perWord 且知道目标字数：round(字数 × perWord) + thinkPad，再夹到 [min, max]。
  *   加 thinkPad 是因为思考 token 也吃 maxTokens，不加就会被思考占光。
+ * - perWord 且同时给了 headroom（补写轮）：按「还差多少字」算正文额度，
+ *   但下限跟着「这一章总共要写多少」走，见下面的 comment。
  * - perWord 但字数未知（undefined / NaN / Infinity）：给 min，绝不给 0——
  *   0 会让请求直接报错，比写不完整还糟。
  * - 传进来的表缺这个 key（老配置、老存档）：回落到 DEFAULT_TOKEN_BUDGETS。
@@ -216,8 +264,17 @@ function isWellFormed(budget: unknown): budget is TokenBudget {
  *   等于静默把请求废掉，所以必须先认出来。
  *
  * 拿到的预算一律先过 clampBudget，所以越界的数值也不会算出非法值。
+ *
+ * 为什么要 headroom：补写轮的额度必须**随剩余字数递减**。按「还差多少字」算，
+ * 差得越少给得越少，模型才不会明明只差 300 字却继续往下铺 2000 字；
+ * 而按「已写字数」算（早前的写法）会反过来越补越多。
  */
-export function resolveBudget(budgets: TokenBudgets, key: BudgetKey, targetWords?: number): number {
+export function resolveBudget(
+  budgets: TokenBudgets,
+  key: BudgetKey,
+  targetWords?: number,
+  headroom?: BudgetHeadroom
+): number {
   const entry = budgets?.[key]
   const raw = isWellFormed(entry) ? entry : DEFAULT_TOKEN_BUDGETS[key]
   const budget = clampBudget(raw)
@@ -225,6 +282,18 @@ export function resolveBudget(budgets: TokenBudgets, key: BudgetKey, targetWords
 
   const words = finiteOr(targetWords, Number.NaN)
   if (!Number.isFinite(words)) return budget.min
+
+  // 补写轮：正文额度按「还差多少字」算，下限按「整章一共要写多少」算。
+  // 下限不跟着剩余字数走，是因为补写轮的正文往往只有几百字，
+  // 按剩余字数算会掉到 min（2048）以下，思考一开头就把额度吃光，正文还是空的。
+  // 而总量（整章）给下限，是为了让「最后一小段」也有足够的思考 + 收束空间。
+  if (headroom && headroom.targetWords > 0) {
+    const forBody = Math.round(headroom.remainingWords * budget.perWord)
+    const floorByChapter = Math.round(headroom.targetWords * budget.perWord)
+    const wanted = Math.max(forBody + budget.thinkPad, Math.round(floorByChapter * 0.35))
+    return Math.min(budget.max, Math.max(budget.min, wanted))
+  }
+
   const wanted = Math.round(words * budget.perWord) + budget.thinkPad
   return Math.min(budget.max, Math.max(budget.min, wanted))
 }

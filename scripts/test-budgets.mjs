@@ -46,9 +46,9 @@ console.log('fixed 固定预算')
 const FIXED_EXPECT = {
   'summary.auto': 600,
   'summary.audit': 700,
-  'audit.book': 2600,
-  'audit.chapter': 2200,
-  'audit.thread': 2000,
+  'audit.book': 6000,
+  'audit.chapter': 4000,
+  'audit.thread': 3600,
   'margin.notes': 1500,
   'naming.ideas': 900,
   'style.traits': 700,
@@ -272,12 +272,12 @@ console.log('结构坏的条目回落默认')
   ]
   for (const [label, value] of MALFORMED) {
     const got = resolveBudget({ 'audit.book': value }, 'audit.book')
-    check(`${label} → 回落默认 2600`, got === 2600, `实际 ${got}`)
+    check(`${label} → 回落默认 6000`, got === 6000, `实际 ${got}`)
   }
 
   // 结构不全的 perWord（缺 max）同样回默认，而不是拼一半参数去算
   const partial = { kind: 'perWord', perWord: 2.2, thinkPad: 1024, min: 2048 }
-  check('perWord 缺 max → 回落默认（固定 2600 不受字数影响）', resolveBudget({ 'audit.book': partial }, 'audit.book', 5000) === 2600, resolveBudget({ 'audit.book': partial }, 'audit.book', 5000))
+  check('perWord 缺 max → 回落默认（固定 6000 不受字数影响）', resolveBudget({ 'audit.book': partial }, 'audit.book', 5000) === 6000, resolveBudget({ 'audit.book': partial }, 'audit.book', 5000))
   check(
     'perWord 缺 max → 按字数的 key 回落默认参数',
     resolveBudget({ 'draft.generate': partial }, 'draft.generate', 3000) === 7624,

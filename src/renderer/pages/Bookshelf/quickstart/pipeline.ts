@@ -748,7 +748,8 @@ export function assembleProject(product: QuickStartProduct): Project {
       title: chapterTitle,
       content,
       summary: item.summary.trim(),
-      status: content ? 'draft' : 'planned',
+      // 章节状态是「事实」：有正文才算开写，没有就是待写（大纲节点的计划另有一套）
+      status: content ? 'draft' : 'planning',
       targetWords: perChapter,
       words: content ? countWords(content) : 0,
       outlineNodeId: node.id,

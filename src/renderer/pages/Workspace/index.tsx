@@ -235,12 +235,16 @@ export function Workspace(): ReactNode {
     const midSentence = mode === 'append' && !!c && c.anchorText.trim().length > 0
     const anchorText = midSentence ? c!.anchorText : undefined
     const tailText = midSentence && c!.tailText.trim() ? c!.tailText : undefined
+    // 长度守护的口径是「整章」，所以要把本章已经写下的字数交出去：
+    // 接着半句写时，目标 2500 字的章里已有 2000 字，这次只该补 500，而不是再写 2500。
+    const existingWords = mode === 'append' ? countWords(stripHtml(chapter.content)) : 0
+    const remaining = Math.max(0, target - existingWords)
     setGen({
       title: mode === 'append' ? (midSentence ? '接着这半句写' : '续写本章') : '生成内容',
-      hint: `模型：${r.label} · 目标约 ${target} 字${midSentence ? ' · 从光标处接续' : ''}${
-        project.settings.lengthMode === 'strict' ? ' · 长度守护已开启' : ''
-      }`,
-      expectWords: target,
+      hint: `模型：${r.label} · 目标约 ${formatNumber(target)} 字${
+        mode === 'append' && existingWords > 0 ? `（本章已有 ${formatNumber(existingWords)} 字，还差约 ${formatNumber(remaining)} 字）` : ''
+      }${midSentence ? ' · 从光标处接续' : ''} · 不足会自动补写`,
+      expectWords: mode === 'append' && existingWords > 0 ? Math.max(120, remaining) : target,
       acceptLabel: mode === 'append' ? (midSentence ? '接到光标处' : '追加到正文') : '替换选区',
       run: (onDelta, onStage, onThought) =>
         generateDraft({
@@ -252,11 +256,12 @@ export function Workspace(): ReactNode {
           temperature: config?.settings.temperature ?? 0.85,
           library: styleLibrary,
           conventions: config?.settings.genreConventions,
+          budgets: config?.settings.tokenBudgets,
           instruction: midSentence
             ? `${instruction}\n（注意：作者的句子只写了一半，你要顺着这半句话写下去，不要另起一段，也不要重写已经写出的部分。）`
             : instruction,
           targetWords: target,
-          lengthGuard: project.settings.lengthMode === 'strict',
+          existingWords,
           selection: mode === 'replace' ? sel?.text : undefined,
           anchorText,
           tailText,
@@ -293,8 +298,10 @@ export function Workspace(): ReactNode {
           temperature: config?.settings.temperature ?? 0.85,
           library: styleLibrary,
           conventions: config?.settings.genreConventions,
+          budgets: config?.settings.tokenBudgets,
           instruction: '把这一段重写得更好：节奏更紧，句子更有张力，不要丢掉原有的情节信息。',
           targetWords: target,
+          // 整段重写是「替换」，篇幅本来就该贴着原文走，强撑长度反而会把这一段灌水
           lengthGuard: false,
           rewriteParagraph: original,
           onDelta,

@@ -26,8 +26,25 @@ export function StatusBadge({ status, onClick }: { status: OutlineNode['status']
   )
 }
 
-/** 可点击变输入框的行内标题 */
-function InlineTitle({ value, onCommit, bold }: { value: string; onCommit: (v: string) => void; bold?: boolean }): ReactNode {
+/**
+ * 可点击变输入框的行内标题。
+ *
+ * 这里的关键是 `shrink-0`：它是标题不被挤掉的那道保险。
+ * 同一行里的摘要是 `min-w-0 truncate`，只要标题也允许收缩（哪怕是 `min-w-0`），
+ * flex 就会把两边一起压——标题先被压到只剩几个字（"第 1 章" 只剩 "章"），
+ * 看起来就像状态/摘要把章节名盖住了。所以标题定死不被压缩，溢出由摘要承担。
+ */
+function InlineTitle({
+  value,
+  onCommit,
+  bold,
+  maxWidth = 420
+}: {
+  value: string
+  onCommit: (v: string) => void
+  bold?: boolean
+  maxWidth?: number
+}): ReactNode {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
 
@@ -50,8 +67,8 @@ function InlineTitle({ value, onCommit, bold }: { value: string; onCommit: (v: s
             setEditing(false)
           }
         }}
-        className="h-[26px] py-0 text-[13px]"
-        style={{ maxWidth: 420 }}
+        className="h-[26px] py-0 text-[13px] shrink-0"
+        style={{ maxWidth, width: '100%' }}
       />
     )
   }
@@ -63,9 +80,15 @@ function InlineTitle({ value, onCommit, bold }: { value: string; onCommit: (v: s
         setDraft(value)
         setEditing(true)
       }}
-      className="min-w-0 text-left truncate rounded px-1 -mx-1 hover:bg-[var(--panel-2)]"
-      style={{ color: 'var(--text)', fontSize: 13, fontWeight: bold ? 600 : 400 }}
-      title="点击重命名"
+      className="shrink-0 max-w-full text-left truncate rounded px-1 -mx-1 hover:bg-[var(--panel-2)]"
+      style={{
+        color: 'var(--text)',
+        fontSize: 13,
+        fontWeight: bold ? 600 : 400,
+        // 有上限但不吃满：标题先占住自己的宽度，剩下的才归摘要
+        maxWidth
+      }}
+      title={value || '点击重命名'}
     >
       {value || '未命名'}
     </button>
@@ -113,7 +136,11 @@ export function VolumeRow({
           {chapterCount} {childLabel}
         </span>
         {node.summary && (
-          <span className="min-w-0 truncate text-[11.5px]" style={{ color: 'var(--text-faint)' }} title={node.summary}>
+          <span
+            className="flex-1 min-w-0 truncate text-[11.5px]"
+            style={{ color: 'var(--text-faint)' }}
+            title={node.summary}
+          >
             {node.summary}
           </span>
         )}
@@ -169,7 +196,13 @@ export function ChapterRow({
             </button>
           )}
           {node.summary && !openBrief && (
-            <span className="min-w-0 truncate text-[11.5px]" style={{ color: 'var(--text-faint)' }} title={node.summary}>
+            // flex-1 + min-w-0：摘要是这一行里唯一允许被压缩的成员，
+            // 标题和状态徽标都 shrink-0，所以窄窗口下掉的是摘要而不是章节名
+            <span
+              className="flex-1 min-w-0 truncate text-[11.5px]"
+              style={{ color: 'var(--text-faint)' }}
+              title={node.summary}
+            >
               {node.summary.replace(/\n/g, ' ')}
             </span>
           )}

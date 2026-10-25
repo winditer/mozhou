@@ -10,5 +10,6 @@ dist/
 .env.local
 Thumbs.db
 .testdata
+.testdata-*
 shots
 dsh-image-gen

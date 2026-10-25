@@ -4,8 +4,12 @@
  *
  *   node scripts/shot.cjs <out.png> [js] [--delay=2600] [--wait=1400]
  *
+ * 环境变量 MOZHOU_SHOT_WIDTH=<px> 可在截图前把窗口宽度改掉，
+ * 用来复现窄窗口下的布局问题（每行元素争宽度之类，宽窗口下往往看不出来）。
+ *
  * 例：
  *   node scripts/shot.cjs shots/ws.png "__MZ.openProject('p_demo')"
+ *   MOZHOU_SHOT_WIDTH=1080 node scripts/shot.cjs shots/narrow.png "__MZ.openProject('p_demo')"
  */
 const { spawn } = require('node:child_process')
 const path = require('node:path')
