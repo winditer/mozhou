@@ -35,6 +35,7 @@ import { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget } from '@shared/budge
 import { resolveTaskModel, taskModelLabel, useApp } from '../../store/app'
 import { IssueCard } from './audit/IssueCard'
 import { MarginNotes } from './audit/MarginNotes'
+import { AiFlavorPanel } from './audit/AiFlavorPanel'
 import {
   buildBookAuditMessages,
   buildChapterAuditMessages,
@@ -77,7 +78,7 @@ const cache = {
 /** 防止组件卸载重挂后重复发起（会重复扣费） */
 const inflight = { book: false, chapter: false, thread: false }
 
-type Scope = 'book' | 'chapter' | 'margin' | 'thread'
+type Scope = 'book' | 'chapter' | 'margin' | 'thread' | 'aiFlavor'
 
 interface RunState {
   running: boolean
@@ -1047,7 +1048,8 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
               { value: 'book', label: '全书一致性' },
               { value: 'chapter', label: '章节体检' },
               { value: 'margin', label: '段落侧批' },
-              { value: 'thread', label: '伏笔盘点' }
+              { value: 'thread', label: '伏笔盘点' },
+              { value: 'aiFlavor', label: '去 AI 味' }
             ]}
             onChange={(v) => {
               setScope(v)
@@ -1277,6 +1279,10 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
         )}
 
         {/* ───────────── 伏笔盘点 ───────────── */}
+        {/* 去 AI 味是本地优先的独立面板：它的扫描不花钱，所以不该被上面那条
+            「审校模型未配置」的提示挡住——没配模型时依然能扫、能看排行。 */}
+        {scope === 'aiFlavor' && <AiFlavorPanel project={project} />}
+
         {scope === 'margin' && (
           <div className="card overflow-hidden" style={{ height: 560 }}>
             <MarginNotes
