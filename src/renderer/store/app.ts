@@ -10,6 +10,7 @@ import type {
 } from '@shared/types'
 import { TASK_LABELS } from '@shared/types'
 import type { StyleLibrary } from '@shared/styleLibrary'
+import type { SkillLibrary } from '@shared/skills'
 import { countWords, outlineTitleKey, resolveOutlineNodeId, buildOutlineIndex, uid } from '@shared/utils'
 import { mz } from '../lib/bridge'
 
@@ -51,10 +52,14 @@ interface AppState {
   loadingProject: boolean
   /** 系统文风分身库（全局共享）。null = 还没载入完；载入失败时是空库，不是 null */
   styleLibrary: StyleLibrary | null
+  /** 写作技法卡库（全局共享）。同上，载入失败时给空库而不是 null */
+  skillLibrary: SkillLibrary | null
 
   init: () => Promise<void>
   loadStyleLibrary: () => Promise<void>
   saveStyleLibrary: (fn: (lib: StyleLibrary) => StyleLibrary) => Promise<boolean>
+  loadSkillLibrary: () => Promise<void>
+  saveSkillLibrary: (fn: (lib: SkillLibrary) => SkillLibrary) => Promise<boolean>
   refreshProjects: () => Promise<void>
   setView: (v: ViewName) => void
   setTab: (t: WorkspaceTab) => void
@@ -104,6 +109,7 @@ export const useApp = create<AppState>((set, get) => ({
   toasts: [],
   loadingProject: false,
   styleLibrary: null,
+  skillLibrary: null,
 
   async init() {
     const [info, config, projects] = await Promise.all([mz.app.info(), mz.config.get(), mz.project.list()])
@@ -111,6 +117,8 @@ export const useApp = create<AppState>((set, get) => ({
     // 库单独载入：老版本 preload 没有 window.mz.library、或 library.json 损坏时，
     // 不能让整个应用起不来——那会把「文风分身不可用」升级成「软件打不开」。
     await get().loadStyleLibrary()
+    // 技法卡同一条纪律：库载入失败不能把「技法卡不可用」升级成「软件打不开」
+    await get().loadSkillLibrary()
     if (!config.settings.firstRunDone) {
       // 只有「真正第一次打开」（一本书都没有）才把首屏留在设置页引导配置模型；
       // 已经有作品的老用户直接进书架，否则每次启动都被丢回设置页。
@@ -135,6 +143,29 @@ export const useApp = create<AppState>((set, get) => ({
     } catch {
       set({ styleLibrary: emptyLibrary() })
       get().toast('文风分身库载入失败', 'error')
+    }
+  },
+
+  async loadSkillLibrary() {
+    try {
+      const lib = await mz.skill.get()
+      set({ skillLibrary: lib ?? { version: 1, seedVersion: 0, skills: [] } })
+    } catch {
+      set({ skillLibrary: { version: 1, seedVersion: 0, skills: [] } })
+      get().toast('技法卡库载入失败', 'error')
+    }
+  },
+
+  async saveSkillLibrary(fn) {
+    const cur = get().skillLibrary ?? { version: 1, seedVersion: 0, skills: [] }
+    try {
+      const next = fn(cur)
+      const saved = await mz.skill.save(next)
+      set({ skillLibrary: saved ?? next })
+      return true
+    } catch (e) {
+      get().toast(`技法卡库保存失败：${(e as Error).message}`, 'error')
+      return false
     }
   },
 

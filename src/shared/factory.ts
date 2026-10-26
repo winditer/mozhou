@@ -20,6 +20,8 @@ export interface NewProjectInput {
   extraRules?: string
   /** 建书向导里选定的默认模型，作为本书任务覆盖 */
   defaultModelId?: string | null
+  /** 设置里配置的默认技法卡，新书继承它们；不传则不带任何技法卡 */
+  defaultSkillIds?: string[]
 }
 
 export const COVER_COLORS = [
@@ -108,10 +110,14 @@ export function createBlankProject(input: NewProjectInput): Project {
         outline: true,
         previous: true,
         style: true,
-        genre: true
+        genre: true,
+        skills: true
       },
       previousChapters: 2,
-      modelOverrides
+      modelOverrides,
+      // 新建书继承设置里的默认技法卡；由调用方传入，避免 factory 去读全局设置
+      activeSkillIds: input.defaultSkillIds ? [...input.defaultSkillIds] : [],
+      skillVersions: {}
     },
     bible: {
       characters: [],

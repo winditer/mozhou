@@ -42,6 +42,11 @@ export function styleLibraryFile(): string {
   return join(dataRoot(), 'style-library.json')
 }
 
+/** 写作技法卡库（全局共享，书内只存 id 引用） */
+export function skillLibraryFile(): string {
+  return join(dataRoot(), 'skills.json')
+}
+
 export function backupDir(): string {
   return join(dataRoot(), 'backups')
 }

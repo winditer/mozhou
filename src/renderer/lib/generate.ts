@@ -8,6 +8,7 @@ import {
   type TokenBudgets
 } from '@shared/budgets'
 import type { StyleLibrary } from '@shared/styleLibrary'
+import { renderSkillsForChat, type SkillLibrary } from '@shared/skills'
 import type { GenreConventionOverrides } from '@shared/genres'
 import { countWords, stripHtml, truncate } from '@shared/utils'
 import { sendChat } from './ai'
@@ -17,7 +18,8 @@ import {
   buildSummaryMessages,
   buildSystemPrompt,
   contextToText,
-  assembleContext
+  assembleContext,
+  skillContext
 } from './prompt'
 
 export interface GenParams {
@@ -39,6 +41,11 @@ export interface GenParams {
    * 那一路就会用回内置公约，跟别处生成出来的东西不是一套规矩。
    */
   conventions?: GenreConventionOverrides | null
+  /**
+   * 技法卡库。同 library 一样挂在基类上：正文与一键开书都要拿到同一份库，
+   * 漏传一处，那一路就少了技法约束，写出来的手感跟别处不一样却查不出原因。
+   */
+  skillLibrary?: SkillLibrary | null
   /** 输出预算配置；不传则用默认值（与改造前行为一致） */
   budgets?: TokenBudgets
   onDelta: (d: string) => void
@@ -316,7 +323,8 @@ export async function generateDraft(p: DraftGenParams): Promise<string> {
       rewriteParagraph: p.rewriteParagraph
     },
     p.library,
-    p.conventions
+    p.conventions,
+    p.skillLibrary
   )
   let text = ''
   p.onStage?.('正在生成…')
@@ -443,7 +451,10 @@ export async function generateChatReply(
     includeCurrent: true,
     conventions: p.conventions
   })
-  const system = `${buildSystemPrompt(p.project, 'prose', p.library, p.conventions)}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。`
+  // 对话不注入技法卡的完整规则：那是执行模式，塞进讨论场景模型会开始逐条讲解
+  // 自己的改稿而不是回答问题。只给「本书挂了哪几张卡」，够它接住「按黄金三章的思路聊」。
+  const skillHint = renderSkillsForChat(p.project.settings.activeSkillIds, p.skillLibrary ?? null, skillContext(p.project))
+  const system = `${buildSystemPrompt(p.project, 'prose', p.library, p.conventions)}${skillHint ? `\n\n${skillHint}` : ''}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。`
   const ctxText = contextToText(ctx)
   const messages = [
     { role: 'system' as const, content: system },

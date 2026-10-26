@@ -549,7 +549,9 @@ export function QuickStart({ open, onClose }: { open: boolean; onClose: () => vo
         firstChapterMessages(
           productNow(''),
           useApp.getState().styleLibrary,
-          useApp.getState().config?.settings.genreConventions
+          useApp.getState().config?.settings.genreConventions,
+          useApp.getState().skillLibrary,
+          useApp.getState().config?.settings.defaultSkillIds
         ),
       BUDGET_KEYS.quickstartFirstChapter,
       applyFirstChapter,

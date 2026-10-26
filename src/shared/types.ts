@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { TokenBudgets } from './budgets'
 import type { StyleLibrary, StylePersona, StyleRef } from './styleLibrary'
+import type { SkillLibrary } from './skills'
 
 /* ────────────────────────────── 渠道与模型 ────────────────────────────── */
 
@@ -82,6 +83,11 @@ export interface AppSettings {
    * 只存被改过的题材，未出现的题材继续沿用 shared/genres.ts 的内置默认值。
    */
   genreConventions: Record<string, string>
+  /**
+   * 新建书时默认勾选的技法卡 id。
+   * 只影响新书：老书的 activeSkillIds 是各自存的，改这里不会动它们。
+   */
+  defaultSkillIds: string[]
 }
 
 export interface Config {
@@ -283,6 +289,8 @@ export interface ContextToggles {
   previous: boolean
   style: boolean
   genre: boolean
+  /** 写作技法卡是否注入（作者勾了卡但想暂时关掉时用，不必清空勾选） */
+  skills: boolean
 }
 
 export interface ProjectSettings {
@@ -298,6 +306,17 @@ export interface ProjectSettings {
   /** 前文注入章数 */
   previousChapters: number
   modelOverrides: Partial<Record<TaskKind, string>>
+  /**
+   * 本书启用的技法卡 id，顺序即注入顺序（作者勾选顺序，不自动排序）。
+   * 只存 id 不存内容：技法卡是跨书复用的方法论，库里改了所有书立刻跟着变。
+   */
+  activeSkillIds: string[]
+  /**
+   * 上次生成时各卡用的版本。
+   * 库里某张卡升版后，界面据此提示「已更新到 vN」，但不阻止生成——
+   * 作者有权知道自己的方法论在变，也有权继续用新版。
+   */
+  skillVersions: Record<string, number>
 }
 
 export interface Project {
@@ -428,6 +447,13 @@ export interface MzApi {
     secretSet(ref: string, value: string): Promise<boolean>
     secretHas(ref: string): Promise<boolean>
     secretClear(ref: string): Promise<void>
+  }
+  /** 写作技法卡库：全局共享，书内只存 id 引用 */
+  skill: {
+    get(): Promise<SkillLibrary>
+    save(lib: SkillLibrary): Promise<SkillLibrary>
+    /** 恢复内置技法卡：保留作者自建的卡，把内置卡恢复为出厂状态 */
+    resetBuiltin(): Promise<SkillLibrary>
   }
   /** 系统文风分身库：全局共享、跨书引用 */
   library: {

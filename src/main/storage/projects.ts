@@ -152,6 +152,15 @@ function normalizeProject(p: Project): Project {
       tone: [],
       audience: '',
       extraRules: '',
+      previousChapters: 2,
+      modelOverrides: {},
+      activeSkillIds: [],
+      skillVersions: {},
+      ...(pf.settings ?? {}),
+      // context 是嵌套对象：整体 spread 会让老数据里缺 skills 键的 context
+      // 直接把默认值覆盖掉，于是 context.skills 变成 undefined，
+      // 而「undefined 不等于关闭」会让面板显示已启用、提示词里却没有。
+      // 所以这里再单独深合并一次 context。
       context: {
         brief: true,
         bible: true,
@@ -159,11 +168,10 @@ function normalizeProject(p: Project): Project {
         outline: true,
         previous: true,
         style: true,
-        genre: true
-      },
-      previousChapters: 2,
-      modelOverrides: {},
-      ...(pf.settings ?? {})
+        genre: true,
+        skills: true,
+        ...(pf.settings?.context ?? {})
+      }
     },
     bible: {
       characters: [],

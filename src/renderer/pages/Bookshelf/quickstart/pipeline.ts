@@ -14,6 +14,7 @@ import { COVER_COLORS, createBlankProject } from '@shared/factory'
 import { clamp, countWords, estimateTokens, truncate, uid } from '@shared/utils'
 import { textToParagraphHtml } from '../../../lib/generate'
 import type { StyleLibrary } from '@shared/styleLibrary'
+import type { SkillLibrary } from '@shared/skills'
 import { buildDraftMessages } from '../../../lib/prompt'
 
 /* ───────────────────────── 类型 ───────────────────────── */
@@ -631,9 +632,22 @@ ${digest(input.settings) || '（尚未确定）'}
 export function firstChapterMessages(
   product: QuickStartProduct,
   library?: StyleLibrary | null,
-  conventions?: GenreConventionOverrides | null
+  conventions?: GenreConventionOverrides | null,
+  skillLibrary?: SkillLibrary | null,
+  /**
+   * 新建书默认勾选的技法卡（设置 → 技法卡库里的 defaultSkillIds）。
+   * 由调用方传进来而不是在这里读 store：本模块是纯函数集合，
+   * scripts 里的测试直接打包它运行，一旦引 store 就测不了。
+   */
+  defaultSkillIds?: string[]
 ): PromptMessage[] {
-  const project = assembleProject({ ...product, firstChapter: '' })
+  const project = assembleProject({ ...product, firstChapter: '' }, defaultSkillIds)
+  // 开书只走到第 5 步才写正文，前面四步是结构化产出（书名、设定、大纲），
+  // 技法卡讲的是「这一章怎么组织」，对 JSON 产物毫无意义，塞进去只会污染格式。
+  // 所以只有这一步带上技法库。
+  //
+  // 技法卡挂在新建书默认勾选的那几张上：这本书还没落盘、作者也还没进写作台勾选，
+  // 用 defaultSkillIds 是唯一能让他「开书时就已经按自己的方法论写」的办法。
   const chapter = project.chapters[0] ?? null
   return buildDraftMessages(
     project,
@@ -644,7 +658,8 @@ export function firstChapterMessages(
       chapterTitle: chapter?.title
     },
     library,
-    conventions
+    conventions,
+    skillLibrary
   )
 }
 
@@ -695,7 +710,7 @@ function toCharacter(item: SettingItem): Character {
  * brief = 书名简介，bible = 世界观条目 + 角色，outline = 分卷（第一卷挂章纲），
  * chapters = 章纲对应章节（第一章带正文）。
  */
-export function assembleProject(product: QuickStartProduct): Project {
+export function assembleProject(product: QuickStartProduct, defaultSkillIds?: string[]): Project {
   const scene = getScene(product.sceneId)
   const perChapter = clamp(Math.round(product.perChapter || scene.defaultChapterWords), scene.minChapterWords, scene.maxChapterWords)
   const title = product.title.title.trim() || '未命名作品'
@@ -709,7 +724,10 @@ export function assembleProject(product: QuickStartProduct): Project {
     premise: intro,
     targetWordsPerChapter: perChapter,
     targetTotalWords: 0,
-    coverColor: pickCoverColor(title)
+    coverColor: pickCoverColor(title),
+    // 开书首章要按设置里的默认技法卡写：这本书还没落盘，作者也没进过写作台，
+    // 不在这里继承，首章就会是「没挂任何技法」写出来的，和之后各章手感不一致
+    defaultSkillIds
   })
 
   // 设定库 + 角色档案

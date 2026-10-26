@@ -30,6 +30,11 @@ const api = {
     secretHas: (ref: string) => invoke('secret:has', ref),
     secretClear: (ref: string) => invoke('secret:clear', ref)
   },
+  skill: {
+    get: () => invoke('skill:get'),
+    save: (lib: unknown) => invoke('skill:save', lib),
+    resetBuiltin: () => invoke('skill:reset-builtin')
+  },
   library: {
     get: () => invoke('library:get'),
     save: (lib: unknown) => invoke('library:save', lib),

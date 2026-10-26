@@ -7,6 +7,7 @@ import { generateChatReply } from '../lib/generate'
 import { abortChat } from '../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../lib/stream'
 import { Button, IconButton, Segmented, Switch, Textarea } from './ui'
+import { SkillsPicker } from './SkillsPicker'
 import { Eye, EyeOff, MessageSquare, Send, Sparkles, Square, Trash2 } from 'lucide-react'
 
 export function AIPanel({
@@ -19,7 +20,12 @@ export function AIPanel({
   onInsertText: (text: string) => void
 }): ReactNode {
   const { config, patchProject, toast } = useApp()
+  // 标签页是本地 state，但外部（截图脚本、E2E）需要能切到「上下文」去看注入预览。
+  // 挂一个只读跳转钩子，行为与点标签页完全一致。
   const [tab, setTab] = useState<'chat' | 'context'>('chat')
+  useEffect(() => {
+    ;(window as unknown as Record<string, unknown>).__MZ_AI_PANEL = { go: (id: string) => setTab(id as 'chat' | 'context') }
+  }, [])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [draft, setDraft] = useState('')
@@ -58,6 +64,7 @@ export function AIPanel({
         history,
         question: q,
         library: useApp.getState().styleLibrary,
+        skillLibrary: useApp.getState().skillLibrary,
         conventions: useApp.getState().config?.settings.genreConventions,
         onDelta: (d) => {
           acc += d
@@ -236,7 +243,8 @@ export function AIPanel({
 function ContextView({ project, chapter }: { project: Project; chapter: Chapter | null }): ReactNode {
   const { patchProject } = useApp()
   const conventions = useApp((s) => s.config?.settings.genreConventions)
-  const ctx = assembleContext(project, chapter, 24000, { includeCurrent: true, conventions })
+  const skillLibrary = useApp((s) => s.skillLibrary)
+  const ctx = assembleContext(project, chapter, 24000, { includeCurrent: true, conventions, skillLibrary })
   const toggles = project.settings.context
   const keys: { key: keyof typeof toggles; label: string }[] = [
     { key: 'brief', label: '作品简介' },
@@ -245,7 +253,8 @@ function ContextView({ project, chapter }: { project: Project; chapter: Chapter 
     { key: 'bible', label: '世界观设定' },
     { key: 'outline', label: '大纲' },
     { key: 'previous', label: '前文章节' },
-    { key: 'style', label: '文风分身' }
+    { key: 'style', label: '文风分身' },
+    { key: 'skills', label: '写作技法' }
   ]
 
   const genreBlock = ctx.blocks.find((b) => b.key === 'genre')
@@ -275,6 +284,17 @@ function ContextView({ project, chapter }: { project: Project; chapter: Chapter 
           </div>
         ))}
       </div>
+
+      {/* 技法卡的勾选放在上下文开关下面：它是「这本书用哪几张方法论」的书级设置，
+          和上面的注入开关是同一层级的配置，混进预览列表里会显得像只读内容 */}
+      {toggles.skills !== false && (
+        <div className="mb-3">
+          <div className="px-1 mb-1.5 text-[11px] font-medium" style={{ color: 'var(--text-dim)' }}>
+            写作技法
+          </div>
+          <SkillsPicker project={project} />
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         {ctx.blocks.map((b) => (

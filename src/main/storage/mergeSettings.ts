@@ -48,7 +48,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   firstRunDone: false,
   showWordCountBar: true,
   // 空表 = 全部沿用 genres.ts 的内置公约；作者在设置里改过谁就出现谁
-  genreConventions: {}
+  genreConventions: {},
+  // 空表 = 新书默认不带任何技法卡；作者在设置页勾了谁就出现谁
+  defaultSkillIds: []
 }
 
 /**
@@ -135,6 +137,26 @@ export function mergeSettings(raw: Partial<AppSettings> | undefined): AppSetting
     typography: { ...DEFAULT_SETTINGS.typography, ...(r.typography ?? {}) },
     taskModels: { ...DEFAULT_SETTINGS.taskModels, ...(r.taskModels ?? {}) },
     tokenBudgets: mergeTokenBudgets(r.tokenBudgets),
-    genreConventions: normalizeConventions(r.genreConventions)
+    genreConventions: normalizeConventions(r.genreConventions),
+    defaultSkillIds: normalizeIdList(r.defaultSkillIds)
   }
+}
+
+/**
+ * id 列表洗一遍：丢掉非字符串与空串，去重但**保留顺序**。
+ * 顺序是作者勾选顺序，也就是技法卡的注入顺序——排序会让结果不可复现。
+ */
+function normalizeIdList(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const x of v) {
+    if (typeof x !== 'string') continue
+    const id = x.trim()
+    if (id && !seen.has(id)) {
+      seen.add(id)
+      out.push(id)
+    }
+  }
+  return out
 }

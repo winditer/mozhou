@@ -4,6 +4,8 @@ import { getGenre, resolveGenreConvention } from '@shared/genres'
 import type { GenreConventionOverrides } from '@shared/genres'
 import { resolveRef } from '@shared/styleLibrary'
 import type { StyleLibrary } from '@shared/styleLibrary'
+import { resolveSkills, SKILL_TOTAL_CHAR_LIMIT } from '@shared/skills'
+import type { SkillLibrary } from '@shared/skills'
 import { countWords, estimateTokens, stripHtml, truncate } from '@shared/utils'
 
 /* ───────────────────── 系统提示词 ───────────────────── */
@@ -63,12 +65,30 @@ export function renderStyleBlock(style: { summary?: string; traits: string[]; sa
  * 传 null/undefined 不是错误——那表示库还没载入或已损坏，此时 resolveRef 会回落到书内的本地覆盖字段，
  * 生成照常进行，只是文风停在引用那一刻的样子。
  */
+/**
+ * 技法卡的适配判据：场景、题材、目标字数。
+ *
+ * 抽成函数是因为三处都要用同一套判断——注入（buildSystemPrompt）、
+ * 上下文面板预览（assembleContext）、写作台勾选列表。三处各写一遍，
+ * 必然出现「列表里灰着不能用，却已经注入进提示词」这种自相矛盾的状态。
+ */
+export function skillContext(project: Project): { sceneId: string; genreId: string; targetWords: number } {
+  const scene = getScene(project.sceneId)
+  const target = project.settings.targetWordsPerChapter || scene.defaultChapterWords
+  return { sceneId: project.sceneId, genreId: project.genreId ?? '', targetWords: target }
+}
+
 export function buildSystemPrompt(
   project: Project,
   mode: 'prose' | 'outline' = 'prose',
   library?: StyleLibrary | null,
   /** 设置里的题材公约覆盖表；不传就只吃内置默认值（试写页 / 测试就是这种情形） */
-  conventions?: GenreConventionOverrides | null
+  conventions?: GenreConventionOverrides | null,
+  /**
+   * 技法卡库。不传 = 不注入技法块，行为与引入技法卡之前完全一致——
+   * 试写页、单元测试、一键开书里那些只关心正文的场景都走这条默认路径。
+   */
+  skillLibrary?: SkillLibrary | null
 ): string {
   const scene = getScene(project.sceneId)
   const s = project.settings
@@ -100,6 +120,20 @@ export function buildSystemPrompt(
     const effective = resolved ?? { summary: style.summary, traits: style.traits, samples: style.samples }
     const block = renderStyleBlock(effective)
     if (block) parts.push(block)
+  }
+
+  // 技法卡插在文风之后、输出纪律之前，这个位置是定死的，三条理由：
+  // ① 不能放到文体之前：技法需要「已经知道这是什么文体」才成立，
+  //    「信息释放节奏」放在学术论文里毫无意义，放前面会压过场景的身份定义。
+  // ② 不能放到输出纪律之后：纪律是格式硬底线（只输出正文、不许编号），
+  //    技法若在后，模型会开始输出「按技法要求本章结构如下」这类说明，把纪律冲掉。
+  // ③ 放文风之后：文风管笔感、技法管组织，组织服从笔感——先定怎么写，再定怎么摆。
+  //
+  // 大纲模式不注入：大纲有自己的一套逐行编号纪律，技法卡讲的是正文的组织方式，
+  // 混进去只会让模型在「第X章 章名：情节点」的格式里塞进正文段落。
+  if (mode === 'prose' && s.context.skills !== false && skillLibrary) {
+    const r = resolveSkills(s.activeSkillIds, skillLibrary, skillContext(project))
+    if (r.text) parts.push(r.text)
   }
 
   // 大纲任务和正文任务的输出纪律完全不同：正文禁止标题编号，大纲反而必须逐行编号，
@@ -153,6 +187,8 @@ export interface ContextOptions {
   includeCurrent?: boolean
   /** 设置里的题材公约覆盖表，用于解析出真正生效的公约正文 */
   conventions?: GenreConventionOverrides | null
+  /** 技法卡库：面板要显示「注入了哪几张、被截断了哪几张」 */
+  skillLibrary?: SkillLibrary | null
 }
 
 export function assembleContext(
@@ -176,6 +212,23 @@ export function assembleContext(
   // 两边共用同一个函数，所以这里的字数和提示词里的字数必然对得上。
   // 题材公约不进 budget 裁剪（它在 system 段，永远不会被丢），但会计入总量统计。
   push('genre', '题材公约', renderGenreBlock(project.genreId, opts.conventions), ctx.genre)
+
+  // 技法卡同样是「预览」，且必须和实际注入用同一个 resolveSkills。
+  // 这里显示的文本若与 buildSystemPrompt 里那段不一致，作者会以为面板在骗人——
+  // 而这正是 renderGenreBlock 当初拆出来要解决的问题，技法卡照同一条纪律办。
+  if (ctx.skills !== false && opts.skillLibrary) {
+    const r = resolveSkills(project.settings.activeSkillIds, opts.skillLibrary, skillContext(project))
+    // 截断与失效要说出来：面板只写「已注入」而实际少注入几张，是最糟的静默失败
+    const notes: string[] = []
+    if (r.trimmed.length) {
+      notes.push(`⚠ 已超出 ${SKILL_TOTAL_CHAR_LIMIT} 字上限，本次未注入：${r.trimmed.map((x) => x.name).join('、')}`)
+    }
+    if (r.missing.length) {
+      notes.push(`⚠ 已失效或不适配本书，本次未注入：${r.missing.join('、')}`)
+    }
+    const text = [r.text, ...notes].filter(Boolean).join('\n\n')
+    push('skills', '写作技法', text, true)
+  }
 
   if (ctx.brief) {
     const b = [
@@ -325,9 +378,10 @@ export function buildDraftMessages(
   chapter: Chapter | null,
   opts: DraftOptions,
   library?: StyleLibrary | null,
-  conventions?: GenreConventionOverrides | null
+  conventions?: GenreConventionOverrides | null,
+  skillLibrary?: SkillLibrary | null
 ): PromptMessage[] {
-  const system = buildSystemPrompt(project, 'prose', library, conventions)
+  const system = buildSystemPrompt(project, 'prose', library, conventions, skillLibrary)
   const ctx = assembleContext(project, chapter)
   const contextText = contextToText(ctx)
   const existing = chapter ? stripHtml(chapter.content).trim() : ''

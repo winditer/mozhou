@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import { basename } from 'node:path'
 import type { Channel, ChatRequest, Config, FilePickResult, Project, ProjectMeta } from '@shared/types'
 import type { StyleLibrary } from '@shared/styleLibrary'
+import type { SkillLibrary } from '@shared/skills'
 import { splitChapters, plainToHtml, countWords, uid } from '@shared/utils'
 import {
   clearSecret,
@@ -19,6 +20,11 @@ import {
   resetBuiltinPersonas,
   saveStyleLibrary
 } from '../storage/styleLibrary'
+import {
+  loadSkillLibrary,
+  resetBuiltinSkills,
+  saveSkillLibrary
+} from '../storage/skills'
 import {
   collectAllProjects,
   createProject,
@@ -78,6 +84,11 @@ export function registerIpc(): void {
   ipcMain.handle('library:get', async () => loadStyleLibrary())
   ipcMain.handle('library:save', async (_e, lib: StyleLibrary) => saveStyleLibrary(lib))
   ipcMain.handle('library:reset-builtin', async () => resetBuiltinPersonas())
+
+  /* ───── 写作技法卡库 ───── */
+  ipcMain.handle('skill:get', async () => loadSkillLibrary())
+  ipcMain.handle('skill:save', async (_e, lib: SkillLibrary) => saveSkillLibrary(lib))
+  ipcMain.handle('skill:reset-builtin', async () => resetBuiltinSkills())
 
   /* ───── project ───── */
   ipcMain.handle('project:list', async (): Promise<ProjectMeta[]> => listProjects())

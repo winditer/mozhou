@@ -44,6 +44,7 @@ export function Workspace(): ReactNode {
   const config = useApp((s) => s.config)
   /** 系统文风分身库：正文/改写都要用它解析引用型分身，否则会退回引用时的旧快照 */
   const styleLibrary = useApp((s) => s.styleLibrary)
+  const skillLibrary = useApp((s) => s.skillLibrary)
   const activeChapterId = useApp((s) => s.activeChapterId)
   const aiPanelOpen = useApp((s) => s.aiPanelOpen)
   const toggleAiPanel = useApp((s) => s.toggleAiPanel)
@@ -255,6 +256,7 @@ export function Workspace(): ReactNode {
           task: 'draft',
           temperature: config?.settings.temperature ?? 0.85,
           library: styleLibrary,
+          skillLibrary,
           conventions: config?.settings.genreConventions,
           budgets: config?.settings.tokenBudgets,
           instruction: midSentence
@@ -297,6 +299,7 @@ export function Workspace(): ReactNode {
           task: 'draft',
           temperature: config?.settings.temperature ?? 0.85,
           library: styleLibrary,
+          skillLibrary,
           conventions: config?.settings.genreConventions,
           budgets: config?.settings.tokenBudgets,
           instruction: '把这一段重写得更好：节奏更紧，句子更有张力，不要丢掉原有的情节信息。',
