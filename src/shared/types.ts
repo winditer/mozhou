@@ -2,6 +2,11 @@ import type { ReactNode } from 'react'
 import type { TokenBudgets } from './budgets'
 import type { StyleLibrary, StylePersona, StyleRef } from './styleLibrary'
 import type { SkillLibrary } from './skills'
+/**
+ * 改稿指令的类型与校验在 `editProtocol.ts`，这里只做类型引用。
+ * 两边互相引用是故意的：`import type` 编译后会被抹掉，不留运行时循环依赖。
+ */
+import type { EditOp } from './editProtocol'
 
 /* ────────────────────────────── 渠道与模型 ────────────────────────────── */
 
@@ -88,6 +93,13 @@ export interface AppSettings {
    * 只影响新书：老书的 activeSkillIds 是各自存的，改这里不会动它们。
    */
   defaultSkillIds: string[]
+  /**
+   * 允许对话直接提改动（mz-edit）。
+   *
+   * 默认开。关掉之后对话只聊天、不再往提示词里注入改稿协议——
+   * 给「模型对 JSON 服从度太差，每次都写坏」或「只想让它当陪聊」的作者留个开关。
+   */
+  allowChatEdits: boolean
 }
 
 export interface Config {
@@ -284,6 +296,16 @@ export interface ChatMessage {
    * 只做界面标注，内容照旧参与后续对话——半截回答拿来接着讨论仍然有用。
    */
   truncated?: boolean
+  /**
+   * 这一轮 AI 提出的改稿指令（已解析校验，但**尚未应用**）。
+   * 存下来而不是当场应用：作者刷新页面后还能看到「本轮提出 4 处修改」并继续应用。
+   * 定位在点开预览时才做——anchors 的有效性取决于当时的正文。
+   */
+  edits?: EditOp[]
+  /** 这批改动被应用的时间。有值就置灰按钮，避免同一批改两次 */
+  editsAppliedAt?: number
+  /** 解析编辑块失败的原因，气泡下方显示，不许静默 */
+  editsError?: string
 }
 
 export interface ContextToggles {

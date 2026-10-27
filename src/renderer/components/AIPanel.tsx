@@ -7,8 +7,11 @@ import { generateChatReply } from '../lib/generate'
 import { abortChat } from '../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../lib/stream'
 import { Button, IconButton, Segmented, Switch, Textarea } from './ui'
+import { ChatEditPreview } from './ChatEditPreview'
+import { parseEditBlock } from '@shared/editProtocol'
+import { resolveEdits, type ResolvedEdit } from '../lib/applyEdits'
 import { SkillsPicker } from './SkillsPicker'
-import { Eye, EyeOff, MessageSquare, Send, Sparkles, Square, Trash2 } from 'lucide-react'
+import { Check, Eye, EyeOff, MessageSquare, Send, Sparkles, Square, Trash2, Undo2, Wand2 } from 'lucide-react'
 
 export function AIPanel({
   project,
@@ -19,7 +22,18 @@ export function AIPanel({
   chapter: Chapter | null
   onInsertText: (text: string) => void
 }): ReactNode {
-  const { config, patchProject, toast } = useApp()
+  const { config, patchProject, toast, patchSettings, applyEditBatch, undoLastEditBatch, lastEditUndo } = useApp()
+  const allowEdits = config?.settings.allowChatEdits !== false
+  // 预览弹窗用的定位结果：打开那一刻按当时正文算，之后正文再变也不会串
+  const [preview, setPreview] = useState<{ msgId: string; edits: ResolvedEdit[] } | null>(null)
+  // 撤销入口只在 30 秒内给：这类改动本来就该当场看着不对就撤，久了也没人能判断该不该撤
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!lastEditUndo) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [lastEditUndo])
+  const canUndo = Boolean(lastEditUndo && now - lastEditUndo.at < 30_000)
   // 标签页是本地 state，但外部（截图脚本、E2E）需要能切到「上下文」去看注入预览。
   // 挂一个只读跳转钩子，行为与点标签页完全一致。
   const [tab, setTab] = useState<'chat' | 'context'>('chat')
@@ -68,6 +82,7 @@ export function AIPanel({
         budgets: config?.settings.tokenBudgets,
         history,
         question: q,
+        allowEdits,
         library: useApp.getState().styleLibrary,
         skillLibrary: useApp.getState().skillLibrary,
         conventions: useApp.getState().config?.settings.genreConventions,
@@ -78,7 +93,9 @@ export function AIPanel({
         onThought: (d) => setThought((t) => t + d),
         onStage: (s) => setStage(s)
       })
-      const final = (r.text || acc).trim()
+      const raw = (r.text || acc).trim()
+      const parsed = allowEdits ? parseEditBlock(raw) : { text: raw, ops: [], errors: [] }
+      const final = (parsed.text || (parsed.ops.length ? '（这一轮只给了改动，没有文字说明）' : '')).trim()
       if (!final) {
         // 一个字都没写：别往对话里塞一个空气泡，那看起来就像「AI 中断了」
         toast(
@@ -99,12 +116,17 @@ export function AIPanel({
             content: final,
             at: Date.now(),
             model: resolved.model,
-            truncated: r.truncated || undefined
+            truncated: r.truncated || undefined,
+            // 改动先存着不落地：是否应用由作者在预览里决定
+            edits: parsed.ops.length ? parsed.ops : undefined,
+            editsError: parsed.errors.length ? parsed.errors.join('；') : undefined
           }
         ]
       }))
       if (r.truncated) {
         toast(`回答被 ${r.maxTokens} 的输出上限截断，末尾不完整。可在「设置 → 输出预算 → 对话」调大额度。`, 'error')
+      } else if (parsed.ops.length) {
+        toast(`AI 提出了 ${parsed.ops.length} 处修改，点「查看并应用」确认后才会动稿子。`, 'ok')
       }
     } catch (e) {
       const msg = (e as Error).message
@@ -140,6 +162,19 @@ export function AIPanel({
         <span className="chip" title={resolved ? `模型：${resolved.model}` : '未配置模型'}>
           {resolved ? resolved.label : '未配置模型'}
         </span>
+        {canUndo && (
+          <button
+            className="chip surface-hover"
+            style={{ height: 20, padding: '0 7px', fontSize: 10.5 }}
+            title="撤销刚才这批对话改稿（正文回到应用之前的样子）"
+            onClick={() => {
+              undoLastEditBatch()
+              toast('已撤销本次改稿', 'ok')
+            }}
+          >
+            <Undo2 size={10} /> 撤销改稿
+          </button>
+        )}
         {project.chat.length > 0 && tab === 'chat' && (
           <IconButton
             title="清空对话"
@@ -212,6 +247,34 @@ export function AIPanel({
                 >
                   {m.content}
                 </div>
+                {m.role === 'assistant' && (m.edits?.length || m.editsError) && (
+                  <div className="mt-1 flex flex-col gap-1">
+                    {m.editsError && (
+                      <div className="text-[10.5px] leading-relaxed" style={{ color: 'var(--warning, #B45309)' }}>
+                        改稿块没读懂：{m.editsError}
+                      </div>
+                    )}
+                    {m.edits?.length ? (
+                      m.editsAppliedAt ? (
+                        <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--ok)' }}>
+                          <Check size={11} /> 这批修改已应用
+                        </div>
+                      ) : (
+                        <button
+                          className="self-start flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] transition-colors"
+                          style={{
+                            background: 'var(--accent-soft)',
+                            border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
+                            color: 'var(--accent)'
+                          }}
+                          onClick={() => setPreview({ msgId: m.id, edits: resolveEdits(project, m.edits ?? []) })}
+                        >
+                          <Wand2 size={11} /> 查看并应用 {m.edits.length} 处修改
+                        </button>
+                      )
+                    ) : null}
+                  </div>
+                )}
               </div>
             ))}
 
@@ -254,9 +317,23 @@ export function AIPanel({
               }}
             />
             <div className="flex items-center justify-between mt-2">
-              <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                ⌘↵ 发送
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
+                  ⌘↵ 发送
+                </span>
+                <button
+                  className="chip surface-hover"
+                  style={{ height: 18, padding: '0 6px', fontSize: 10, color: allowEdits ? 'var(--accent)' : 'var(--text-faint)' }}
+                  title={
+                    allowEdits
+                      ? '现在允许 AI 在回答里附上可直接应用的改动（会先给你看 diff 才落地）。点一下改成只聊天。'
+                      : '现在只聊天，不会提出改动。点一下允许 AI 附上可直接应用的改动。'
+                  }
+                  onClick={() => void patchSettings({ allowChatEdits: !allowEdits })}
+                >
+                  {allowEdits ? '可改稿' : '只聊天'}
+                </button>
+              </div>
               {streaming ? (
                 <Button size="sm" onClick={() => abortChat()}>
                   <Square size={12} /> 停止
@@ -272,6 +349,25 @@ export function AIPanel({
       ) : (
         <ContextView project={project} chapter={chapter} />
       )}
+
+      <ChatEditPreview
+        open={preview !== null}
+        edits={preview?.edits ?? []}
+        onClose={() => setPreview(null)}
+        onApply={(kept) => {
+          const msgId = preview?.msgId
+          applyEditBatch(kept)
+          if (msgId) {
+            patchProject((p) => ({
+              ...p,
+              chat: p.chat.map((m) => (m.id === msgId ? { ...m, editsAppliedAt: Date.now() } : m))
+            }))
+          }
+          setPreview(null)
+          setNow(Date.now())
+          toast(`已应用 ${kept.length} 处修改，正文可在章节版本历史里回退。`, 'ok')
+        }}
+      />
     </div>
   )
 }

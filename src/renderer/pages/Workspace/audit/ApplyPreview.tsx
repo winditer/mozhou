@@ -9,6 +9,7 @@
 import { useState, type ReactNode } from 'react'
 import { ArrowRight, Check, RefreshCw, X } from 'lucide-react'
 import { Button, Modal, Spinner } from '../../../components/ui'
+import { diffSpan } from '../../../lib/diffText'
 
 export interface DiffPair {
   /** 段落序号（从 1 开始，给作者看的） */
@@ -40,25 +41,6 @@ export interface ApplyPreviewState {
   canRetry?: boolean
 }
 
-/**
- * 找出两段文字的最小差异区间（最长公共前缀/后缀之外的部分）。
- *
- * 整段加删除线对「只改了两三个字」的情况反而更难读：作者要在一大段划掉的
- * 文字里自己找差异。所以这里算出真正变化的那一小段，只给它上高亮。
- */
-function diffSpan(before: string, after: string): { pre: string; del: string; post: string; ins: string } {
-  const a = before
-  const b = after
-  let start = 0
-  while (start < a.length && start < b.length && a[start] === b[start]) start++
-  let endA = a.length
-  let endB = b.length
-  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
-    endA--
-    endB--
-  }
-  return { pre: a.slice(0, start), del: a.slice(start, endA), post: a.slice(endA), ins: b.slice(start, endB) }
-}
 
 /**
  * 把对比项按章节分组。

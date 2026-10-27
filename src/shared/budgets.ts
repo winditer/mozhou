@@ -143,7 +143,10 @@ export const DEFAULT_TOKEN_BUDGETS: TokenBudgets = {
   // 同样计入 maxTokens。旧值 3000 常常只够它想完、来不及写，表现就是回答半截
   // 甚至一片空白（用户报的「右侧 AI 对话总是中断」）。抬高上限不会让回答变长，
   // 只是不再被硬截断；重试逻辑在 generateChatReply 里另有一层兜底。
-  'chat.reply': fixed(8192),
+  //
+  // 12000 而不是 8192：1.4.0 起对话可以附 mz-edit 改动块，而 anchor 要把正文
+  // 原话抄一遍，比自然语言啰嗦得多。实测一轮四五处改动 + 正常回答，8192 会截断。
+  'chat.reply': fixed(12000),
   'custom.default': fixed(3000),
   'quickstart.title': fixed(1200),
   'quickstart.settings': fixed(6000),

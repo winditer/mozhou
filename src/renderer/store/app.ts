@@ -13,6 +13,19 @@ import type { StyleLibrary } from '@shared/styleLibrary'
 import type { SkillLibrary } from '@shared/skills'
 import { countWords, outlineTitleKey, resolveOutlineNodeId, buildOutlineIndex, uid } from '@shared/utils'
 import { mz } from '../lib/bridge'
+import { applyResolved, type ResolvedEdit } from '../lib/applyEdits'
+
+/**
+ * 上一次对话改稿的现场：只留章节/大纲/设定三样，因为那是 mz-edit 唯一能碰的东西。
+ * 只留最近一次、不持久化——这类改动本来就该当场看着不对就撤；
+ * 做全量 undo 栈会让 project.json 无声膨胀。
+ */
+export interface EditUndo {
+  at: number
+  chapters: Chapter[]
+  outline: OutlineNode[]
+  bible: Project['bible']
+}
 
 /** 库载入失败时的兜底：空库仍然能工作（书里自建的分身照常生效），只是没有系统分身可选 */
 function emptyLibrary(): StyleLibrary {
@@ -77,6 +90,25 @@ interface AppState {
   setActiveChapter: (id: string | null) => void
   addChapter: (title?: string, atIndex?: number) => Chapter | null
   patchChapter: (id: string, patch: Partial<Chapter>) => void
+  /**
+   * 对话改稿的批量落地：一次 patchProject 改完所有章，每章压一份快照。
+   *
+   * 不能复用 patchChapter 逐条调——它内部各自 patchProject，改五章就是五次落盘、
+   * 五次自动保存，中间任何一次失败都会留下「改了一半」的稿子。
+   */
+  applyEditBatch: (edits: ResolvedEdit[]) => void
+  /** 撤销上一次对话改稿（界面只在 30 秒内给入口） */
+  undoLastEditBatch: () => void
+  /** 上一次改稿前的现场，供撤销用；重启即失效是有意的 */
+  lastEditUndo: EditUndo | null
+  /**
+   * 外部改动计数：`applyEditBatch` / 撤销时自增。
+   *
+   * 编辑器（BookEditor）只在章节切换时同步内容，为的是别在作者打字时把光标冲掉；
+   * 但对话改稿改的常常是**当前正在编辑的这一章**，不通知它就会「数据改了、屏幕上没变」。
+   * 所以给一个显式的信号：只有非打字路径的改动才自增。
+   */
+  externalEditRev: number
   removeChapter: (id: string) => void
   moveChapter: (from: number, to: number) => void
   /** 手动切换章节状态（章节列表里的徽标，点击循环） */
@@ -110,6 +142,8 @@ export const useApp = create<AppState>((set, get) => ({
   loadingProject: false,
   styleLibrary: null,
   skillLibrary: null,
+  lastEditUndo: null,
+  externalEditRev: 0,
 
   async init() {
     const [info, config, projects] = await Promise.all([mz.app.info(), mz.config.get(), mz.project.list()])
@@ -245,6 +279,47 @@ export const useApp = create<AppState>((set, get) => ({
     saveTimer = setTimeout(() => {
       void get().flush()
     }, 700)
+  },
+
+  applyEditBatch(edits) {
+    const cur = get().project
+    if (!cur) return
+    // 一条能落地的都没有：不留现场、不落盘，省得「撤销」按钮指向一次没发生的改动
+    if (!edits.some((e) => e.status === 'found')) return
+    // 先留现场再改：撤销要能回到「应用之前」的样子
+    set({ lastEditUndo: { at: Date.now(), chapters: cur.chapters, outline: cur.outline, bible: cur.bible } })
+    get().patchProject((p) => {
+      const next = applyResolved(p, edits)
+      if (next === p) return p
+      const chapters = next.chapters.map((c) => {
+        const prev = p.chapters.find((x) => x.id === c.id)
+        if (!prev) return c
+        if (prev.content === c.content) {
+          // 正文没变的章：快照与字数沿用原来的，避免无意义的版本堆积
+          return { ...c, versions: prev.versions, words: prev.words, updatedAt: prev.updatedAt }
+        }
+        const words = countWords(c.content)
+        const merged: Chapter = {
+          ...c,
+          words,
+          updatedAt: Date.now(),
+          versions: pushSnapshot(prev.versions, prev.content, c.content)
+        }
+        if (words > 0 && merged.status === 'planning') merged.status = 'draft'
+        return merged
+      })
+      return { ...next, chapters }
+    })
+    set({ externalEditRev: get().externalEditRev + 1 })
+    void get().flush()
+  },
+
+  undoLastEditBatch() {
+    const u = get().lastEditUndo
+    if (!u) return
+    get().patchProject((p) => ({ ...p, chapters: u.chapters, outline: u.outline, bible: u.bible }))
+    set({ lastEditUndo: null, externalEditRev: get().externalEditRev + 1 })
+    void get().flush()
   },
 
   async flush() {

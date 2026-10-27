@@ -7,6 +7,7 @@ import Highlight from '@tiptap/extension-highlight'
 import { Bold, Italic, Heading1, Heading2, List, ListOrdered, Quote, Redo2, Strikethrough, Undo2 } from 'lucide-react'
 import type { Chapter } from '@shared/types'
 import { IconButton } from './ui'
+import { useApp } from '../store/app'
 
 /** 光标在段落里的断点：用来做「半句续写」与「重写本段」 */
 export interface CaretContext {
@@ -123,17 +124,20 @@ export function BookEditor({
     onReady?.(editor)
   }, [editor, onReady])
 
-  // 切换章节时同步内容（只依赖章节 id，避免输入时被打断）
+  // 切换章节时同步内容（只依赖章节 id，避免输入时被打断）。
+  // externalEditRev：对话改稿 / 撤销这类**非打字**的外部改动会自增，
+  // 让「正在编辑的这一章」也能立刻刷新——否则会出现「数据改了、屏幕上还是旧文」。
   const chapterId = chapter?.id ?? null
+  const externalEditRev = useApp((s) => s.externalEditRev)
   useEffect(() => {
     if (!editor) return
     const html = chapter?.content || '<p></p>'
     if (editor.getHTML() !== html) {
       editor.commands.setContent(html, { emitUpdate: false })
     }
-    scrollRef.current?.scrollTo({ top: 0 })
+    if (externalEditRev === 0) scrollRef.current?.scrollTo({ top: 0 })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapterId, editor])
+  }, [chapterId, editor, externalEditRev])
 
   if (!chapter) {
     return (

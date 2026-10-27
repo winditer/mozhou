@@ -35,6 +35,7 @@
     "test:skills": "node scripts/test-skills.mjs",
     "e2e:audit": "node scripts/e2e-audit.cjs",
     "e2e:chat": "node scripts/e2e-chat-reply.cjs",
+    "e2e:chatedit": "node scripts/e2e-chat-edit.cjs",
     "test:audit-chapter-parse": "node scripts/test-audit-chapter-parse.mjs",
     "test:ai-flavor": "node scripts/test-ai-flavor.mjs",
     "test:ai-flavor-rewrite": "node scripts/test-ai-flavor-rewrite.mjs",

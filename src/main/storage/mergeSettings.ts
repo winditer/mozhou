@@ -50,7 +50,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // 空表 = 全部沿用 genres.ts 的内置公约；作者在设置里改过谁就出现谁
   genreConventions: {},
   // 空表 = 新书默认不带任何技法卡；作者在设置页勾了谁就出现谁
-  defaultSkillIds: []
+  defaultSkillIds: [],
+  // 对话默认可以提改稿：真正的闸门是「应用前必须确认」，不是这个开关
+  allowChatEdits: true
 }
 
 /**

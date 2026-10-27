@@ -10,6 +10,7 @@ import {
 import type { StyleLibrary } from '@shared/styleLibrary'
 import { renderSkillsForChat, type SkillLibrary } from '@shared/skills'
 import type { GenreConventionOverrides } from '@shared/genres'
+import { renderEditPrompt } from '@shared/editProtocol'
 import { countWords, stripHtml, truncate } from '@shared/utils'
 import { sendChat } from './ai'
 import {
@@ -469,6 +470,8 @@ export async function generateChatReply(
     question: string
     /** 系统文风分身库：对话也要跟书内生成用同一套生效文风 */
     library?: StyleLibrary | null
+    /** 是否允许这一轮提出可直接应用的改动（mz-edit）。关掉就是纯聊天 */
+    allowEdits?: boolean
   }
 ): Promise<ChatReply> {
   const budgets = p.budgets ?? DEFAULT_TOKEN_BUDGETS
@@ -480,7 +483,9 @@ export async function generateChatReply(
   // 对话不注入技法卡的完整规则：那是执行模式，塞进讨论场景模型会开始逐条讲解
   // 自己的改稿而不是回答问题。只给「本书挂了哪几张卡」，够它接住「按黄金三章的思路聊」。
   const skillHint = renderSkillsForChat(p.project.settings.activeSkillIds, p.skillLibrary ?? null, skillContext(p.project))
-  const system = `${buildSystemPrompt(p.project, 'prose', p.library, p.conventions)}${skillHint ? `\n\n${skillHint}` : ''}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。`
+  // 改稿协议放在最后：它是行为约束，紧贴用户消息之前最容易被遵守
+  const editHint = p.allowEdits ? `\n\n${renderEditPrompt()}` : ''
+  const system = `${buildSystemPrompt(p.project, 'prose', p.library, p.conventions)}${skillHint ? `\n\n${skillHint}` : ''}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。${editHint}`
   const ctxText = contextToText(ctx)
   const messages = [
     { role: 'system' as const, content: system },

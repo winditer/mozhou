@@ -1,0 +1,311 @@
+#!/usr/bin/env node
+/**
+ * 端到端验收：对话直接改稿（mz-edit）。
+ *
+ *   node scripts/e2e-chat-edit.cjs
+ *
+ * 三件事必须成立，缺一条这个功能就不该发：
+ *
+ *   A. apply（能落地）
+ *      AI 在回答里附 mz-edit → 气泡出现「查看并应用 2 处修改」→ 预览 → 应用后
+ *      正文真的变了、梗概真的变了、章节版本多了一份快照（可回退）、气泡标「已应用」。
+ *
+ *   B. notfound（定位不到就不许动）
+ *      anchor 对不上时，预览里必须红字说「找不到原文」，且一个字节都不许改——
+ *      这条挂了，等于模型瞎编一句话就能改坏作者的稿子。
+ *
+ *   C. malformed（格式坏了要说人话）
+ *      JSON 坏了：自然语言回答照常留下，同时明说「改稿块没读懂」，
+ *      绝不静默丢弃（静默会让作者以为 AI 没听懂）。
+ */
+const http = require('node:http')
+const path = require('node:path')
+const fs = require('node:fs')
+const { spawn } = require('node:child_process')
+
+const ROOT = path.resolve(__dirname, '..')
+const PORT = Number(process.env.E2E_PORT || 8813)
+
+const ANCHOR = '信封烧到一半时，她发现自己记住了上面的每一个字。'
+const REWRITE = '信封烧到一半时，她忽然想起父亲说过：记住的从来不是字，是那天的风。'
+const NEW_SUMMARY = '周砚秋烧掉第七十三封信，发现自己记住的不是字，而是那天的风。'
+
+/** 假网关：按 mode 返回带改稿块 / 坏块 / 假 anchor 的回答 */
+function startMock(mode, requests) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const url = req.url || ''
+      if (req.method === 'GET' && url.endsWith('/models')) {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ object: 'list', data: [{ id: 'e2e-edit', object: 'model' }] }))
+        return
+      }
+      if (req.method === 'POST' && url.includes('/chat/completions')) {
+        let body = ''
+        req.on('data', (c) => (body += c))
+        req.on('end', () => {
+          let payload = {}
+          try {
+            payload = JSON.parse(body)
+          } catch {
+            /* 忽略 */
+          }
+          requests.push({ maxTokens: payload.max_tokens ?? payload.max_completion_tokens })
+          const systemMsg = (payload.messages || []).find((m) => m.role === 'system')?.content || ''
+          requests[requests.length - 1].hasEditPrompt = systemMsg.includes('mz-edit')
+
+          let text = ''
+          if (mode === 'apply') {
+            const ops = {
+              edits: [
+                { op: 'replace_paragraph', chapter: '第 1 章', anchor: ANCHOR, after: REWRITE },
+                { op: 'set_chapter_summary', chapter: '第 1 章', after: NEW_SUMMARY }
+              ]
+            }
+            text = `结尾那句可以再落一下，我改了两处：\n\n\`\`\`mz-edit\n${JSON.stringify(ops)}\n\`\`\`\n`
+          } else if (mode === 'notfound') {
+            const ops = { edits: [{ op: 'replace_paragraph', chapter: '第 1 章', anchor: '这句话根本不在正文里。', after: 'x' }] }
+            text = `我试着改一下：\n\n\`\`\`mz-edit\n${JSON.stringify(ops)}\n\`\`\`\n`
+          } else {
+            text = `我这就改：\n\n\`\`\`mz-edit\n{"edits":[{"op":"replace_paragraph","chapter":"第 1 章","anchor":"${ANCHOR}"\n\`\`\`\n`
+          }
+
+          res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+          const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`)
+          const chunk = (delta, finish) => ({
+            id: 'e2e',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta, finish_reason: finish ?? null }]
+          })
+          const parts = text.match(/[\s\S]{1,16}/g) || []
+          let i = 0
+          const tick = setInterval(() => {
+            if (i < parts.length) {
+              send(chunk({ content: parts[i] }))
+              i++
+            } else {
+              send(chunk({}, 'stop'))
+              res.write('data: [DONE]\n\n')
+              res.end()
+              clearInterval(tick)
+            }
+          }, 4)
+          res.on('close', () => clearInterval(tick))
+        })
+        return
+      }
+      res.writeHead(404, { 'content-type': 'application/json' })
+      res.end('{}')
+    })
+    server.listen(PORT, '127.0.0.1', () => resolve(server))
+  })
+}
+
+/** 浏览器里跑：发问 → 等流结束 → （可选）预览 → （可选）应用 → 收集状态 */
+function driveJs(mode) {
+  return `
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const btn = (re) => Array.from(document.querySelectorAll('button')).find((b) => re.test(b.textContent.trim()))
+  await window.__MZ.openProject('p_demo')
+  await sleep(1600)
+
+  const before = window.__MZ.state().project
+  const ch1Before = before.chapters[0]
+  const snapshot = {
+    content: ch1Before.content,
+    summary: ch1Before.summary,
+    versions: (ch1Before.versions || []).length
+  }
+
+  const ta = Array.from(document.querySelectorAll('textarea')).find((t) => (t.placeholder || '').includes('问问 AI'))
+  if (!ta) return { ok: false, error: '没找到对话框' }
+  const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+  setValue.call(ta, '帮我把最后一句改得更有余味，顺手更新一下梗概。')
+  ta.dispatchEvent(new Event('input', { bubbles: true }))
+  await sleep(250)
+  btn(/^发送$/).click()
+
+  const started = Date.now()
+  while (Date.now() - started < 60000) {
+    await sleep(300)
+    if (btn(/^发送$/)) break
+  }
+  await sleep(700)
+
+  const chat = window.__MZ.state().project.chat
+  const last = chat.filter((m) => m.role === 'assistant').at(-1)
+  const out = {
+    ok: true,
+    msgs: chat.length,
+    assistantLen: (last?.content || '').length,
+    edits: (last?.edits || []).length,
+    editsError: last?.editsError || null,
+    appliedAt: last?.editsAppliedAt || null,
+    rawHasFence: (last?.content || '').includes('mz-edit')
+  }
+
+  const openBtn = btn(/查看并应用/)
+  out.hasOpenButton = Boolean(openBtn)
+  if (!openBtn) {
+    out.body = document.body.innerText.slice(0, 1200)
+    return out
+  }
+  openBtn.click()
+  await sleep(700)
+
+  out.modalText = (document.querySelector('[role="dialog"]')?.innerText || document.body.innerText).slice(0, 1200)
+  const applyBtn = btn(/^应用选中/)
+  out.applyLabel = applyBtn ? applyBtn.textContent.trim() : null
+  out.applyDisabled = applyBtn ? applyBtn.disabled : null
+
+  if (${mode === 'apply' ? 'true' : 'false'} && applyBtn && !applyBtn.disabled) {
+    applyBtn.click()
+    await sleep(1200)
+    const after = window.__MZ.state().project
+    const ch1After = after.chapters.find((c) => c.id === '${'ch_1'}')
+    const chat2 = after.chat
+    const last2 = chat2.filter((m) => m.role === 'assistant').at(-1)
+    out.changed = ch1After.content !== snapshot.content
+    out.contentAfter = ch1After.content
+    out.summaryAfter = ch1After.summary
+    out.versionsAfter = (ch1After.versions || []).length
+    out.appliedAt2 = last2?.editsAppliedAt || null
+    out.body = document.body.innerText.slice(0, 1200)
+  } else {
+    out.contentUnchanged = window.__MZ.state().project.chapters[0].content === snapshot.content
+    out.versionsAfter = (window.__MZ.state().project.chapters[0].versions || []).length
+  }
+  // 关键：不能只断言 store。作者看到的是**编辑器里的字**，
+  // 数据改了而编辑器没刷新，等于这个功能不能用。
+  const pms = Array.from(document.querySelectorAll('.ProseMirror'))
+  out.editorText = (pms[0]?.innerText || '').slice(0, 2000)
+  out.debug = {
+    rev: window.__MZ.state().externalEditRev,
+    pmCount: pms.length,
+    pms: pms.map((el) => (el.innerText || '').slice(0, 100)),
+    storeTail: (window.__MZ.state().project.chapters[0].content || '').slice(-90)
+  }
+  out.snapshot = snapshot
+  return out
+})()
+`
+}
+
+async function runCase(mode) {
+  const requests = []
+  const server = await startMock(mode, requests)
+  const out = path.join(ROOT, 'shots', `e2e-chatedit-${mode}.png`)
+  fs.mkdirSync(path.dirname(out), { recursive: true })
+
+  const env = { ...process.env }
+  delete env.ELECTRON_RUN_AS_NODE
+  env.HOME = path.join(ROOT, '.home')
+  env.MOZHOU_USER_DATA = path.join(ROOT, `.testdata-e2e-chatedit-${mode}`)
+  env.MOZHOU_SHOT = out
+  env.MOZHOU_SHOT_DELAY = '2600'
+  env.MOZHOU_SHOT_JS = driveJs(mode)
+  env.MOZHOU_SHOT_JS_WAIT = '3000'
+
+  fs.mkdirSync(env.MOZHOU_USER_DATA, { recursive: true })
+  const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, '.testdata', 'config.json'), 'utf8'))
+  cfg.channels = [
+    {
+      id: 'ch_e2e_edit',
+      name: 'e2e-edit',
+      protocol: 'openai',
+      baseUrl: `http://127.0.0.1:${PORT}/v1`,
+      headers: {},
+      enabled: true,
+      presetId: 'custom',
+      models: []
+    }
+  ]
+  cfg.models = [{ id: 'm_e2e', channelId: 'ch_e2e_edit', model: 'e2e-edit', enabled: true, label: 'E2E' }]
+  cfg.settings.taskModels = { draft: 'm_e2e', outline: 'm_e2e', polish: 'm_e2e', naming: 'm_e2e', summary: 'm_e2e', audit: 'm_e2e', chat: 'm_e2e' }
+  cfg.settings.tokenBudgets = { ...(cfg.settings.tokenBudgets || {}), 'chat.reply': { kind: 'fixed', tokens: 12000 } }
+  cfg.settings.allowChatEdits = true
+  fs.writeFileSync(path.join(env.MOZHOU_USER_DATA, 'config.json'), JSON.stringify(cfg, null, 2))
+  const srcProjects = path.join(ROOT, '.testdata', 'projects')
+  if (fs.existsSync(srcProjects)) fs.cpSync(srcProjects, path.join(env.MOZHOU_USER_DATA, 'projects'), { recursive: true })
+  const libSrc = path.join(ROOT, '.testdata', 'style-library.json')
+  if (fs.existsSync(libSrc)) fs.copyFileSync(libSrc, path.join(env.MOZHOU_USER_DATA, 'style-library.json'))
+
+  const child = spawn(path.join(ROOT, 'node_modules', '.bin', 'electron'), ['out/main/index.js', '--no-sandbox', '--disable-gpu'], {
+    env,
+    stdio: ['ignore', 'ignore', 'pipe']
+  })
+  let stderr = ''
+  child.stderr.on('data', (d) => (stderr += d.toString()))
+  const timer = setTimeout(() => child.kill('SIGKILL'), 90_000)
+  await new Promise((r) => child.on('exit', r))
+  clearTimeout(timer)
+  server.close()
+
+  const raw = (stderr.match(/\[mz\] shot-js-result (.*)/) || [])[1]
+  let result = null
+  try {
+    result = raw ? JSON.parse(raw) : null
+  } catch {
+    result = null
+  }
+  return { requests, result: result || {}, screenshot: out, mode, stderr }
+}
+
+async function main() {
+  let pass = 0
+  let fail = 0
+  const check = (name, ok, detail = '') => {
+    if (ok) {
+      pass++
+      console.log(`  ✓ ${name}`)
+    } else {
+      fail++
+      console.log(`  ✗ ${name}${detail ? ` — ${detail}` : ''}`)
+    }
+  }
+
+  /* ── A. 提了改动 → 预览 → 应用 ── */
+  console.log('A. AI 提出 2 处改动并应用')
+  const a = await runCase('apply')
+  console.log(`  请求：${a.requests.map((r) => r.maxTokens).join(' → ') || '（无）'}`)
+  console.log(`  截图：${path.relative(ROOT, a.screenshot)}`)
+  check('发出了请求', a.requests.length >= 1, `实际 ${a.requests.length} 次`)
+  check('提示词里带了改稿协议', Boolean(a.requests[0]?.hasEditPrompt), 'system 里没有 mz-edit 说明')
+  check('解析出 2 处改动', a.result.edits === 2, `实际 ${a.result.edits}`)
+  check('回答正文里不留 mz-edit 原文', a.result.rawHasFence === false, '气泡里出现了围栏')
+  check('气泡上有「查看并应用」', Boolean(a.result.hasOpenButton))
+  check('正文真的改了', a.result.changed === true && String(a.result.contentAfter || '').includes('那天的风'), String(a.result.contentAfter || '').slice(0, 80))
+  check('梗概也改了', a.result.summaryAfter === NEW_SUMMARY, a.result.summaryAfter)
+  check('章节版本多了一份快照', (a.result.versionsAfter || 0) === (a.result.snapshot?.versions || 0) + 1, `${a.result.snapshot?.versions} → ${a.result.versionsAfter}`)
+  check('气泡标成「已应用」', Boolean(a.result.appliedAt2))
+  console.log('  debug:', JSON.stringify(a.result.debug || {}).slice(0, 700))
+  check('编辑器里也真的换了字（不是只改数据）', String(a.result.editorText || '').includes('那天的风'), String(a.result.editorText || '').slice(0, 80))
+
+  /* ── B. anchor 对不上 ── */
+  console.log('\nB. anchor 对不上（不许改任何东西）')
+  const b = await runCase('notfound')
+  console.log(`  截图：${path.relative(ROOT, b.screenshot)}`)
+  check('解析出 1 处改动', b.result.edits === 1, `实际 ${b.result.edits}`)
+  check('气泡上有「查看并应用」', Boolean(b.result.hasOpenButton))
+  check('预览里说找不到原文', /找不到原文/.test(b.result.modalText || ''), (b.result.modalText || '').slice(0, 120))
+  check('应用按钮是禁用的', b.result.applyDisabled === true, `applyDisabled=${b.result.applyDisabled}`)
+  check('正文一个字没改', b.result.contentUnchanged === true)
+  check('没产生版本快照', (b.result.versionsAfter || 0) === (b.result.snapshot?.versions || 0), `${b.result.snapshot?.versions} → ${b.result.versionsAfter}`)
+
+  /* ── C. 格式坏了 ── */
+  console.log('\nC. 改稿块 JSON 坏了（要说人话）')
+  const c = await runCase('malformed')
+  console.log(`  截图：${path.relative(ROOT, c.screenshot)}`)
+  check('自然语言回答保留下来', (c.result.assistantLen || 0) > 0, `len=${c.result.assistantLen}`)
+  check('记下了错误原因', Boolean(c.result.editsError), String(c.result.editsError))
+  check('没有产生可应用的改动', (c.result.edits || 0) === 0, `edits=${c.result.edits}`)
+
+  console.log(`\n${fail === 0 ? '端到端通过' : '端到端失败'}：${pass} 通过 / ${fail} 失败`)
+  process.exit(fail === 0 ? 0 : 1)
+}
+
+main().catch((e) => {
+  console.error(e)
+  process.exit(1)
+})
