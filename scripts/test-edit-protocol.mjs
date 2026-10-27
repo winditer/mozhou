@@ -151,6 +151,10 @@ console.log('必填校验')
     [{ op: 'set_outline_node', node: '开端', field: 'children', after: 'x' }, false],
     [{ op: 'set_outline_node', node: '开端', field: 'status', after: 'writing' }, true],
     [{ op: 'set_outline_node', node: '开端', field: 'status', after: 'finished' }, false],
+    [{ op: 'add_outline_node', title: '第4章 灰线', summary: 'x' }, true],
+    [{ op: 'add_outline_node', title: '第4章 灰线', parent: '第一卷', status: 'planned' }, true],
+    [{ op: 'add_outline_node', title: '第4章 灰线', status: 'finished' }, false],
+    [{ op: 'add_outline_node', summary: '没有标题' }, false],
     [{ op: 'bible_upsert', collection: 'characters', name: '林昭', fields: { motivation: 'x' } }, true],
     [{ op: 'bible_upsert', collection: 'characters', name: '林昭', fields: { unknownField: 'x' } }, false],
     [{ op: 'bible_upsert', collection: 'nope', name: '林昭', fields: { motivation: 'x' } }, false],
@@ -248,7 +252,10 @@ console.log('提示词')
 {
   const p = renderEditPrompt()
   check('包含围栏名', p.includes('mz-edit'))
-  check('七种 op 全列出', ['replace_paragraph', 'insert_paragraph', 'delete_paragraph', 'replace_literal', 'set_chapter_summary', 'set_outline_node', 'bible_upsert'].every((k) => p.includes(k)))
+  check(
+    '八种 op 全列出',
+    ['replace_paragraph', 'insert_paragraph', 'delete_paragraph', 'replace_literal', 'set_chapter_summary', 'set_outline_node', 'add_outline_node', 'bible_upsert'].every((k) => p.includes(k))
+  )
   check('提到 anchor 要逐字', p.includes('逐字'))
   check('提到上限', p.includes(String(MAX_EDITS)))
   check('说明了什么时候不用输出', p.includes('不要输出'))

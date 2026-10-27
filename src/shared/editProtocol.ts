@@ -26,6 +26,7 @@ export type EditOpKind =
   | 'replace_literal'
   | 'set_chapter_summary'
   | 'set_outline_node'
+  | 'add_outline_node'
   | 'bible_upsert'
 
 export const EDIT_OP_KINDS: EditOpKind[] = [
@@ -35,6 +36,7 @@ export const EDIT_OP_KINDS: EditOpKind[] = [
   'replace_literal',
   'set_chapter_summary',
   'set_outline_node',
+  'add_outline_node',
   'bible_upsert'
 ]
 
@@ -87,6 +89,14 @@ export interface EditOp {
   to?: string
   /** 大纲节点引用：id / 完整标题 / 唯一子串 */
   node?: string
+  /** add_outline_node：新节点挂在哪个节点下（卷标题）。省略则挂到最后一卷 */
+  parent?: string
+  /** add_outline_node：新节点标题 */
+  title?: string
+  /** add_outline_node：新节点情节点 */
+  summary?: string
+  /** add_outline_node：新节点状态，默认 planned */
+  status?: OutlineNode['status']
   field?: 'title' | 'summary' | 'status'
   collection?: BibleCollection
   /** 设定条目的识别名（characters 用 name，其余用 title/term） */
@@ -254,6 +264,22 @@ export function validateOp(item: unknown, index: number): { op?: EditOp; error?:
       }
       return { op: { op: 'set_outline_node', node: o.node as string, field, after: o.after as string } }
     }
+    case 'add_outline_node': {
+      if (!need(o.title)) return { error: `${at}：缺少 title（新大纲节点的标题）` }
+      const status = o.status === undefined ? undefined : String(o.status)
+      if (status !== undefined && !['planned', 'writing', 'done'].includes(status)) {
+        return { error: `${at}：status 只能是 planned / writing / done` }
+      }
+      return {
+        op: {
+          op: 'add_outline_node',
+          parent: isText(o.parent) && o.parent.trim() ? o.parent : undefined,
+          title: (o.title as string).trim(),
+          summary: isText(o.summary) ? o.summary : undefined,
+          status: status as OutlineNode['status'] | undefined
+        }
+      }
+    }
     case 'bible_upsert': {
       const collection = o.collection
       if (!isText(collection) || !BIBLE_COLLECTIONS.includes(collection as BibleCollection)) {
@@ -419,22 +445,32 @@ export function resolveOutlineNode(nodes: OutlineNode[], ref: string): OutlineRe
  * 写得克制的原因：这段话会跟着每一轮对话发给模型，占的是作者的钱。
  * 只讲清三件事——什么时候动手、anchor 必须逐字抄、拿不准就别猜。
  */
-export function renderEditPrompt(): string {
+/**
+ * @param currentChapterTitle 作者此刻正在看的那一章标题。
+ * 给出来是为了让模型**照抄**而不是凭印象写章名——「第 29 章 信」与「第29章」在匹配器里
+ * 都能认，但模型真正写错的是**章号**（说 29 章、引 28 章的原文），所以这段话连同
+ * 「只填你确实看到过正文的章」一起放在最前面。
+ */
+export function renderEditPrompt(currentChapterTitle?: string): string {
   return `## 你可以直接改稿
 
 当作者要你「改」「换」「加一段」「统一改成」「更新设定/大纲」时，不要只在回答里描述改法，另外输出一个 mz-edit 代码块，让改动可以被应用。只讨论写法、诊断问题、出主意时不要输出该代码块。
+
+${currentChapterTitle ? `作者此刻正在看的是「${currentChapterTitle}」，下面【作品资料】里给出正文的也是这一章。` : ''}
 
 格式（整块是合法 JSON，只输出一个这样的块）：
 \`\`\`mz-edit
 {"edits":[{"op":"replace_paragraph","chapter":"第3章","anchor":"原文的连续片段","after":"改写后的整段"}]}
 \`\`\`
 
-规则：
-1. anchor 必须从正文或梗概里**逐字复制**一段连续文字，不要概括、不要改标点、不要跨段拼接；长度取 10–40 字，足够唯一即可。
-2. 一轮最多 20 条。只提真正需要改的地方，不要为了显得勤奋而重写整章。
-3. chapter 用章节标题（如「第3章 她把最后一封信烧了」）或章号（「第3章」）。
-4. 拿不准原文就说明白，不要猜；猜错会改到别的段上。
-5. 自然语言的回答照常写给作者看，改稿块放在最后。
+规则（逐条照做，违反第 1、2 条会导致改动被丢弃）：
+1. **anchor 必须是【一章正文里同一段】的连续文字，逐字复制**：不要概括、不要改标点、不要跨段拼接、不要用「……」省略、不要凭记忆写。长度取 10–40 字，够唯一即可。
+2. **chapter 只填「当前章节」那个标题**。如果作者让你改的是别的章，chapter 就填你确实看到过正文的那一章标题；如果你没有看到过那一章的正文，就别输出这一条，改在回答里说明。
+3. 一轮最多 20 条。只提真正需要改的地方，不要为了显得勤奋而重写整章。
+4. replace_paragraph / insert_paragraph 的 after 可以是多段：用空行分隔，一段一行。
+5. 拿不准原文就说明白，不要猜——anchor 对不上时这条改动会被整个丢弃，作者只会看到「找不到原文」。
+6. 要「补第 30 章的大纲」而大纲里还没有这一章时，用 add_outline_node 新增，别用 set_outline_node —— 后者只能改已有的，找不到就整条作废。
+7. 自然语言的回答照常写给作者看，改稿块放在最后。
 
 可用操作：
 - replace_paragraph：换掉 anchor 所在的整段。字段 chapter / anchor / after
@@ -442,6 +478,7 @@ export function renderEditPrompt(): string {
 - delete_paragraph：删掉 anchor 所在的整段。字段 chapter / anchor
 - replace_literal：纯文本批量替换。字段 scope（book|chapter）/ from / to（+chapter）
 - set_chapter_summary：重写章节梗概。字段 chapter / after
-- set_outline_node：改大纲节点。字段 node / field（title|summary|status）/ after
+- set_outline_node：改**已有**大纲节点。字段 node / field（title|summary|status）/ after
+- add_outline_node：大纲里还没有这一章时，新增一个节点。字段 title / summary（情节点）/ status（默认 planned）/ parent（卷标题，省略则挂最后一卷）
 - bible_upsert：新增或更新设定条目。字段 collection（characters|world|terms|timeline|threads）/ name / fields`
 }

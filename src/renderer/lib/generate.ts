@@ -484,7 +484,9 @@ export async function generateChatReply(
   // 自己的改稿而不是回答问题。只给「本书挂了哪几张卡」，够它接住「按黄金三章的思路聊」。
   const skillHint = renderSkillsForChat(p.project.settings.activeSkillIds, p.skillLibrary ?? null, skillContext(p.project))
   // 改稿协议放在最后：它是行为约束，紧贴用户消息之前最容易被遵守
-  const editHint = p.allowEdits ? `\n\n${renderEditPrompt()}` : ''
+  const editHint = p.allowEdits
+    ? `\n\n${renderEditPrompt(p.chapter?.title || undefined)}`
+    : ''
   const system = `${buildSystemPrompt(p.project, 'prose', p.library, p.conventions)}${skillHint ? `\n\n${skillHint}` : ''}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。${editHint}`
   const ctxText = contextToText(ctx)
   const messages = [

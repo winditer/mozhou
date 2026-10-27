@@ -42,9 +42,16 @@ export interface ResolvedEdit {
   hits?: number[]
   /** 补充说明：候选章节、大纲路径、全书命中数等 */
   note?: string
+  /**
+   * 这句话其实在别的章里：AI 报的章节不对，按逐字匹配把它找回来了。
+   * 界面要显眼标出来——「改哪一章」是作者最需要复核的信息。
+   */
+  chapterCorrected?: boolean
   /** 设定改动：集合与识别名，apply 时用来回写 */
   collection?: BibleCollection
   entryName?: string
+  /** 新增大纲节点时带过去的数据 */
+  outlineNode?: { parentId?: string; title: string; summary: string; status: OutlineNode['status'] }
   /** 设定改动的字段名 */
   fieldName?: string
 }
@@ -73,6 +80,21 @@ function findParagraphs(chapter: Chapter, anchor: string): { indexes: number[]; 
 }
 
 /**
+ * 在**其它**章里找 anchor。用于 AI 报错章节时的兜底。
+ *
+ * 只做逐字/归一化匹配（沿用 paragraphMatches），不做模糊相似度：
+ * 找回来的是「确实写着这几个字的那一段」，作者在预览里能立刻认出是不是要改的地方。
+ * 相似度匹配会把「差不多的一段」当成目标，那才是真正的猜。
+ */
+function findAcrossChapters(project: Project, anchor: string, excludeId: string): { chapterId: string; indexes: number[] }[] {
+  if (!anchor.trim()) return []
+  return project.chapters
+    .filter((c) => c.id !== excludeId)
+    .map((c) => ({ chapterId: c.id, indexes: findParagraphs(c, anchor).indexes }))
+    .filter((x) => x.indexes.length > 0)
+}
+
+/**
  * 逐条定位。返回顺序与入参一致，界面按章分组时再排。
  *
  * 三种结果都要能画：found 可勾选；ambiguous 列出所有命中段让作者自己在对话里说清；
@@ -95,6 +117,28 @@ function resolveOne(project: Project, op: EditOp): ResolvedEdit | ResolvedEdit[]
       const ref = resolveChapterRef(project, op.chapter ?? '')
       if (!ref.chapterId) {
         const cands = ref.candidates.map((c) => c.title)
+        // 章号都指不准时，还有最后一招：这句话全书只有一处逐字对得上，就把它捞回来。
+        // （模型写「第 30 章」而书里只有 29 章，这种错很常见。）
+        const found = findAcrossChapters(project, op.anchor ?? '', '')
+        if (cands.length === 0 && found.length === 1 && found[0].indexes.length === 1) {
+          const target = project.chapters.find((c) => c.id === found[0].chapterId) as Chapter
+          const paras = splitParagraphs(target.content)
+          const i = found[0].indexes[0]
+          const p = paras[i]
+          return {
+            op,
+            status: 'found',
+            display: 'paragraph',
+            label: `${chapterLabel(target)} · 第 ${i + 1} 段`,
+            chapterId: target.id,
+            chapterTitle: chapterLabel(target),
+            before: op.op === 'insert_paragraph' ? '' : p.text,
+            after: op.op === 'delete_paragraph' ? '' : (op.after ?? ''),
+            paragraphIndex: i,
+            chapterCorrected: true,
+            note: `AI 报的章节「${op.chapter ?? ''}」在书里对不上，这句话只在「${chapterLabel(target)}」里出现过`
+          }
+        }
         return {
           op,
           status: 'not-found',
@@ -112,16 +156,50 @@ function resolveOne(project: Project, op: EditOp): ResolvedEdit | ResolvedEdit[]
       const { indexes } = findParagraphs(chapter, anchor)
       const chapters = splitParagraphs(chapter.content)
       if (!indexes.length) {
+        // AI 报的章节经常不对：它手里可能还攥着上一章的正文（问的时候在写第 28 章，
+        // 落笔却写了「第 29 章」）。这时按**逐字匹配**到全书找一遍——这是定位，不是猜：
+        // 找回来了也照样在预览里标明「AI 说的是第29章，这句话在第28章」，作者一点就否掉。
+        // 全书中命中多处时仍然只标歧义，绝不挑一个。
+        const found = findAcrossChapters(project, anchor, chapter.id)
+        if (found.length === 1 && found[0].indexes.length === 1) {
+          const hit = found[0]
+          const target = project.chapters.find((c) => c.id === hit.chapterId) as Chapter
+          const paras = splitParagraphs(target.content)
+          const i = hit.indexes[0]
+          const p = paras[i]
+          return {
+            op,
+            status: 'found',
+            display: 'paragraph',
+            label: `${chapterLabel(target)} · 第 ${i + 1} 段`,
+            chapterId: target.id,
+            chapterTitle: chapterLabel(target),
+            before: op.op === 'insert_paragraph' ? '' : p.text,
+            after: op.op === 'delete_paragraph' ? '' : (op.after ?? ''),
+            paragraphIndex: i,
+            chapterCorrected: true,
+            note: [
+              `AI 说是「${chapterLabel(chapter)}」，这句话实际在「${chapterLabel(target)}」`,
+              op.op === 'insert_paragraph' ? `在「${p.text.slice(0, 18)}…」之后插入` : undefined
+            ]
+              .filter(Boolean)
+              .join('；')
+          }
+        }
         return {
           op,
-          status: 'not-found',
+          status: found.length ? 'ambiguous' : 'not-found',
           display: 'paragraph',
           label: chapterLabel(chapter),
           chapterId: chapter.id,
           chapterTitle: chapterLabel(chapter),
           before: '',
           after: op.after ?? '',
-          note: '这一章里没找到这句话，请让 AI 重新摘录原文'
+          note: found.length
+            ? `这一章里没有这句话，但全书中${found
+                .map((f) => `「${chapterLabel(project.chapters.find((c) => c.id === f.chapterId) as Chapter)}」${f.indexes.length} 处`)
+                .join('、')}能对上，请指明改哪一处`
+            : '这一章里没找到这句话，全书也没有逐字对得上的段落。请让 AI 重新摘录原文，或直接把那句原文贴给它'
         }
       }
       if (indexes.length > 1) {
@@ -260,7 +338,7 @@ function resolveOne(project: Project, op: EditOp): ResolvedEdit | ResolvedEdit[]
           after: op.after ?? '',
           note: ref.candidates.length
             ? `同名的节点有 ${ref.candidates.length} 个：${ref.candidates.map((c) => c.title).join('、')}`
-            : '大纲里找不到这个节点'
+            : `大纲里还没有「${op.node ?? ''}」这个节点。如果是要补一章新大纲，请让 AI 改用 add_outline_node 新增`
         }
       }
       const field = op.field ?? 'summary'
@@ -273,6 +351,61 @@ function resolveOne(project: Project, op: EditOp): ResolvedEdit | ResolvedEdit[]
         before: String(oldVal ?? ''),
         after: op.after ?? '',
         note: ref.path.length > 1 ? ref.path.slice(0, -1).join(' › ') : undefined
+      }
+    }
+
+    case 'add_outline_node': {
+      const title = (op.title ?? '').trim()
+      if (!title) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'new-entry',
+          label: '新增大纲节点',
+          before: '',
+          after: '',
+          note: '没给出节点标题'
+        }
+      }
+      // 已经有同名节点就不加：大纲里两个「第 30 章」会让后续按标题定位全乱
+      const dup = flattenOutlineTitles(project.outline).find((t) => t.title.trim() === title)
+      if (dup) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'new-entry',
+          label: `新增大纲节点「${title}」`,
+          before: '',
+          after: '',
+          note: `大纲里已经有「${dup.title}」了，要改内容请用 set_outline_node`
+        }
+      }
+      const parentRef = op.parent ? resolveOutlineNode(project.outline, op.parent) : null
+      if (op.parent && !parentRef?.node) {
+        const cands = parentRef?.candidates.map((c) => c.title) ?? []
+        return {
+          op,
+          status: 'not-found',
+          display: 'new-entry',
+          label: `新增大纲节点「${title}」`,
+          before: '',
+          after: '',
+          note: cands.length
+            ? `要挂的节点有 ${cands.length} 个同名：${cands.join('、')}`
+            : `大纲里没有「${op.parent}」这个节点，请换用卷标题或省略 parent`
+        }
+      }
+      const parent = parentRef?.node
+      const status = op.status ?? 'planned'
+      const summary = op.summary ?? ''
+      return {
+        op,
+        status: 'found',
+        display: 'new-entry',
+        label: `新增大纲节点「${title}」${parent ? `· 挂在 ${parentRef?.path.join(' › ')}` : '· 挂在最后一卷'}`,
+        before: '',
+        after: [title, summary, OUTLINE_STATUS_LABEL[status]].filter(Boolean).join('　'),
+        outlineNode: { parentId: parent?.id, title, summary, status }
       }
     }
 
@@ -325,6 +458,70 @@ function resolveOne(project: Project, op: EditOp): ResolvedEdit | ResolvedEdit[]
       }))
     }
   }
+}
+
+/** 摊平大纲标题，用于「是不是已经有这一章了」的判断 */
+function flattenOutlineTitles(nodes: OutlineNode[]): { id: string; title: string }[] {
+  const out: { id: string; title: string }[] = []
+  const walk = (list: OutlineNode[]): void => {
+    for (const n of list) {
+      out.push({ id: n.id, title: n.title })
+      anyChildren(n)
+    }
+  }
+  const anyChildren = (n: OutlineNode): void => {
+    if (n.children?.length) walk(n.children)
+  }
+  walk(nodes)
+  return out
+}
+
+const OUTLINE_STATUS_LABEL: Record<OutlineNode['status'], string> = {
+  planned: '待写',
+  writing: '撰写中',
+  done: '已完成'
+}
+
+/**
+ * 往大纲里挂一个新节点。
+ *
+ * 指定了 parentId 就挂到该节点下；没指定就挂进**最后一卷**——作者说「补第 30 章大纲」时，
+ * 意思是接在书尾，而不是另起一卷。一本书连卷都没有（有人不写卷）就直接挂根上。
+ */
+function appendOutlineNode(
+  outline: OutlineNode[],
+  node: { parentId?: string; title: string; summary: string; status: OutlineNode['status'] }
+): OutlineNode[] {
+  const fresh: OutlineNode = {
+    id: uid(),
+    title: node.title,
+    summary: node.summary,
+    type: 'chapter',
+    status: node.status,
+    children: []
+  }
+  const parentId = node.parentId
+  if (parentId) {
+    // 顶层命中就直接挂；否则往下找（卷 › 章 › 情节点三层）
+    return outline.map((n) =>
+      n.id === parentId ? { ...n, children: [...(n.children ?? []), fresh] } : { ...n, children: cloneWithInsert(n.children ?? [], parentId, fresh) }
+    )
+  }
+  const lastVolumeIdx = (() => {
+    for (let i = outline.length - 1; i >= 0; i--) if (outline[i].type === 'volume') return i
+    return -1
+  })()
+  if (lastVolumeIdx < 0) return [...outline, { ...fresh, type: outline.length ? 'chapter' : 'volume' }]
+  return outline.map((n, i) => (i === lastVolumeIdx ? { ...n, children: [...(n.children ?? []), fresh] } : n))
+}
+
+/** 深层查找 parentId 并插入（大纲只有两三层，递归足够） */
+function cloneWithInsert(nodes: OutlineNode[], parentId: string, fresh: OutlineNode): OutlineNode[] {
+  return nodes.map((n) =>
+    n.id === parentId
+      ? { ...n, children: [...(n.children ?? []), fresh] }
+      : { ...n, children: n.children?.length ? cloneWithInsert(n.children, parentId, fresh) : n.children }
+  )
 }
 
 function collectionLabel(c: BibleCollection): string {
@@ -484,6 +681,12 @@ export function applyResolved(project: Project, edits: ResolvedEdit[]): Project 
         next = { ...next, outline: updateOutlineNode(next.outline, ref.node.id, e.op.field ?? 'summary', e.after) }
       }
     }
+  }
+
+  // 新增大纲节点：按出现顺序追加，作者在预览里排的就是最终顺序
+  for (const e of usable) {
+    if (e.op.op !== 'add_outline_node' || !e.outlineNode) continue
+    next = { ...next, outline: appendOutlineNode(next.outline, e.outlineNode) }
   }
 
   // 设定库

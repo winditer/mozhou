@@ -63,6 +63,19 @@ function startMock(mode, requests) {
               ]
             }
             text = `结尾那句可以再落一下，我改了两处：\n\n\`\`\`mz-edit\n${JSON.stringify(ops)}\n\`\`\`\n`
+          } else if (mode === 'wrongchapter') {
+            // 真实用户踩到的场景：AI 报「第 2 章」，引的却是第 1 章的原文
+            const ops = {
+              edits: [
+                {
+                  op: 'replace_paragraph',
+                  chapter: '第 2 章',
+                  anchor: ANCHOR,
+                  after: '信封烧到一半时，她把火按灭了，把信收进内兜。'
+                }
+              ]
+            }
+            text = `这一处我按你说的改了：\n\n\`\`\`mz-edit\n${JSON.stringify(ops)}\n\`\`\`\n`
           } else if (mode === 'notfound') {
             const ops = { edits: [{ op: 'replace_paragraph', chapter: '第 1 章', anchor: '这句话根本不在正文里。', after: 'x' }] }
             text = `我试着改一下：\n\n\`\`\`mz-edit\n${JSON.stringify(ops)}\n\`\`\`\n`
@@ -164,6 +177,7 @@ function driveJs(mode) {
     await sleep(1200)
     const after = window.__MZ.state().project
     const ch1After = after.chapters.find((c) => c.id === '${'ch_1'}')
+    out.ch2Content = after.chapters.find((c) => c.id === 'ch_2')?.content || ''
     const chat2 = after.chat
     const last2 = chat2.filter((m) => m.role === 'assistant').at(-1)
     out.changed = ch1After.content !== snapshot.content
@@ -285,6 +299,18 @@ async function main() {
   check('应用按钮是禁用的', b.result.applyDisabled === true, `applyDisabled=${b.result.applyDisabled}`)
   check('正文一个字没改', b.result.contentUnchanged === true)
   check('没产生版本快照', (b.result.versionsAfter || 0) === (b.result.snapshot?.versions || 0), `${b.result.snapshot?.versions} → ${b.result.versionsAfter}`)
+
+  /* ── B2. AI 报错章节（真实场景） ── */
+  console.log('\nB2. AI 把章节号写错，但引文是逐字的（章节已修正）')
+  const w = await runCase('wrongchapter')
+  if (process.env.E2E_DEBUG) console.log('  stderr:', (w.stderr || '').slice(-1500))
+  console.log(`  截图：${path.relative(ROOT, w.screenshot)}`)
+  check('解析出 1 处改动', w.result.edits === 1, `实际 ${w.result.edits}`)
+  check('预览里标出「章节已修正」', /章节已修正/.test(w.result.modalText || ''), (w.result.modalText || '').slice(0, 120))
+  check('预览里指到了真正的章', /第 1 章/.test(w.result.modalText || ''), (w.result.modalText || '').slice(0, 120))
+  check('可以应用（不是 0 处）', w.result.applyDisabled === false, `applyDisabled=${w.result.applyDisabled}`)
+  check('这一轮不动稿子（只在预览里确认）', w.result.contentUnchanged === true)
+  check('没有任何章被改动', (w.result.versionsAfter || 0) === (w.result.snapshot?.versions || 0))
 
   /* ── C. 格式坏了 ── */
   console.log('\nC. 改稿块 JSON 坏了（要说人话）')

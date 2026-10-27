@@ -73,8 +73,19 @@ export function paragraphMatches(paragraphText: string, anchor: string): 'exact'
 }
 
 /** 纯文本转一个 <p> 段落（转义后包一层），插入正文时用 */
+/**
+ * 纯文本 → 正文 HTML。
+ *
+ * 空行/单换行都当分段：模型写多段改写时会用 `\n\n`（或者干脆一行一段），
+ * 早期把换行压成空格，结果三段并成一大段——作者看到的是「AI 把段落合并了」。
+ * 中文小说里一行就是一段，按行切不会切错。
+ */
 export function textToParagraph(text: string): string {
-  const clean = String(text ?? '').trim()
-  if (!clean) return ''
-  return `<p>${escapeHtml(clean).replace(/\n+/g, ' ')}</p>`
+  const text2 = String(text ?? '').trim()
+  if (!text2) return ''
+  const lines = text2
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return lines.map((line) => `<p>${escapeHtml(line)}</p>`).join('')
 }

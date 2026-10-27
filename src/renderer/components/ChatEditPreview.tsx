@@ -159,6 +159,15 @@ function EditRow({ edit, off, onToggle }: { edit: ResolvedEdit; off: boolean; on
           <AlertTriangle size={11} style={{ color: 'var(--warning, #B45309)' }} />
         )}
         <span style={{ color: 'var(--text-dim)' }}>{edit.label}</span>
+        {edit.chapterCorrected && (
+          <span
+            className="chip shrink-0"
+            style={{ height: 16, padding: '0 6px', fontSize: 10, color: 'var(--warning, #B45309)' }}
+            title="AI 报的章节与实际原文所在章节不一致，这里按逐字匹配找到了真正的那一段"
+          >
+            章节已修正
+          </span>
+        )}
         {status && (
           <span className="chip" style={{ height: 16, padding: '0 6px', fontSize: 10, color: 'var(--warning, #B45309)' }}>
             {status}

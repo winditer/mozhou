@@ -191,6 +191,51 @@ console.log('找不到与歧义')
   check('章节不存在时给提示', Boolean(noChap.note), noChap.note)
 }
 
+/* ── 3b. 报错章节：按逐字匹配捞回来（真实用户踩到的场景） ── */
+console.log('章节报错时的兜底')
+{
+  const p = makeProject()
+  // AI 说「第 3 章」，但引的是第 2 章的原文——实际使用中最常见的一种错
+  const [e] = resolveEdits(p, [
+    { op: 'replace_paragraph', chapter: '第3章', anchor: '父亲的抽屉里有一把钥匙。', after: '抽屉里只有一把断掉的门闩。' }
+  ])
+  check('在真正的章里找到了', e.status === 'found', e.status)
+  check('改到了第 2 章', e.chapterId === 'c2', String(e.chapterId))
+  check('标了章节已修正', e.chapterCorrected === true, String(e.chapterCorrected))
+  check('说明里讲清了章号对不上', Boolean(e.note?.includes('第2章 老槐树') && e.note.includes('第3章')), e.note)
+  const n = applyResolved(p, [e])
+  check('改的是第 2 章正文', chapterOf(n, 'c2').content.includes('断掉的门闩'), textsOf(n, 'c2'))
+  check('报错的那一章没被动', chapterOf(n, 'c3').content === chapterOf(p, 'c3').content)
+
+  // 全书多处都能对上 → 只标歧义，绝不挑一个
+  const dup = makeProject()
+  dup.chapters[0].content = P('雨下了一夜。', '他走了。')
+  dup.chapters[1].content = P('他走了。')
+  const [amb] = resolveEdits(dup, [{ op: 'replace_paragraph', chapter: '第3章', anchor: '他走了。', after: 'x' }])
+  check('跨章多处命中 → ambiguous', amb.status === 'ambiguous', amb.status)
+  check('歧义里列出了候选章', Boolean(amb.note?.includes('第1章') && amb.note?.includes('第2章')), amb.note)
+  check('歧义不产生改动', applyResolved(dup, [amb]).chapters[1].content === dup.chapters[1].content)
+
+  // 章号整个对不上（书里只有 3 章，AI 写了第 30 章），但原文唯一
+  const [far] = resolveEdits(p, [{ op: 'replace_paragraph', chapter: '第30章', anchor: '雨下了一夜。', after: '雪下了一夜。' }])
+  check('章号不存在但原文唯一 → 也能定位', far.status === 'found', far.status)
+  check('同样标了章节已修正', far.chapterCorrected === true, String(far.chapterCorrected))
+}
+
+/* ── 3c. after 里换行应当分段 ── */
+console.log('多段改写不合并')
+{
+  const p = makeProject()
+  const [e] = resolveEdits(p, [
+    { op: 'replace_paragraph', chapter: '第1章', anchor: '雨下了一夜。', after: '第一段。\n\n第二段。\n第三段。' }
+  ])
+  const n = applyResolved(p, [e])
+  const c = chapterOf(n, 'c1').content
+  check('分出三个段落', (c.match(/<p>/g) || []).length === 2 + 3, c)
+  check('顺序正确', c.indexOf('第一段') < c.indexOf('第二段') && c.indexOf('第二段') < c.indexOf('第三段'))
+  check('不再把换行压成空格', !c.includes('第一段。 第二段。'), c)
+}
+
 /* ── 4. 章标题不作为改写目标 ── */
 console.log('标题段保护')
 {
@@ -259,6 +304,34 @@ console.log('梗概与大纲')
 
   const [bad] = resolveEdits(p, [{ op: 'set_outline_node', node: '不存在的节点', field: 'title', after: 'x' }])
   check('节点找不到 → not-found', bad.status === 'not-found', bad.status)
+}
+
+/* ── 7b. 新增大纲节点 ── */
+console.log('新增大纲节点')
+{
+  const p = makeProject()
+  const edits = resolveEdits(p, [
+    { op: 'add_outline_node', title: '第4章 灰线', summary: '陈默在灰线上看见自己的名字', status: 'planned' },
+    { op: 'add_outline_node', parent: '第一卷', title: '第5章 门', summary: '钥匙对不上' }
+  ])
+  check('两条都能定位', edits.every((e) => e.status === 'found'), JSON.stringify(edits.map((e) => e.status)))
+  check('显示为新增条目', edits.every((e) => e.display === 'new-entry'), JSON.stringify(edits.map((e) => e.display)))
+  const n = applyResolved(p, edits)
+  const vol = n.outline[0]
+  check('挂进了第一卷', vol.children.length === 3, JSON.stringify(vol.children.map((c) => c.title)))
+  check('顺序按提交顺序', vol.children[1].title === '第4章 灰线' && vol.children[2].title === '第5章 门', JSON.stringify(vol.children.map((c) => c.title)))
+  check('有独立 id', Boolean(vol.children[1].id) && vol.children[1].id !== vol.children[2].id)
+  check('情节点写进去了', vol.children[1].summary === '陈默在灰线上看见自己的名字', vol.children[1].summary)
+  check('状态默认 planned', vol.children[2].status === 'planned', vol.children[2].status)
+  check('类型是章', vol.children[1].type === 'chapter', vol.children[1].type)
+  check('原大纲未被就地修改', p.outline[0].children.length === 1)
+
+  const [dup] = resolveEdits(p, [{ op: 'add_outline_node', title: '开端', summary: 'x' }])
+  check('已有同名节点 → not-found', dup.status === 'not-found', dup.status)
+  check('并说明该用 set_outline_node', Boolean(dup.note?.includes('set_outline_node')), dup.note)
+
+  const [badParent] = resolveEdits(p, [{ op: 'add_outline_node', parent: '不存在的卷', title: '第9章' }])
+  check('父节点不存在 → not-found', badParent.status === 'not-found', badParent.status)
 }
 
 /* ── 8. 设定库 ── */

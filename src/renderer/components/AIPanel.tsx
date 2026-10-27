@@ -126,7 +126,10 @@ export function AIPanel({
       if (r.truncated) {
         toast(`回答被 ${r.maxTokens} 的输出上限截断，末尾不完整。可在「设置 → 输出预算 → 对话」调大额度。`, 'error')
       } else if (parsed.ops.length) {
-        toast(`AI 提出了 ${parsed.ops.length} 处修改，点「查看并应用」确认后才会动稿子。`, 'ok')
+        // 顺手先定位一遍：全部落空时别用「提了 3 处修改」这种成功口吻骗作者点开
+        const ok = resolveEdits(project, parsed.ops).filter((e) => e.status === 'found').length
+        if (ok) toast(`AI 提出了 ${parsed.ops.length} 处修改，点「查看并应用」确认后才会动稿子。`, 'ok')
+        else toast(`AI 提了 ${parsed.ops.length} 处改动，但原文都对不上——点开能看到原因，可以让它重新摘录。`, 'error')
       }
     } catch (e) {
       const msg = (e as Error).message
