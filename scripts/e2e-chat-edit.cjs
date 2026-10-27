@@ -180,12 +180,6 @@ function driveJs(mode) {
   // 数据改了而编辑器没刷新，等于这个功能不能用。
   const pms = Array.from(document.querySelectorAll('.ProseMirror'))
   out.editorText = (pms[0]?.innerText || '').slice(0, 2000)
-  out.debug = {
-    rev: window.__MZ.state().externalEditRev,
-    pmCount: pms.length,
-    pms: pms.map((el) => (el.innerText || '').slice(0, 100)),
-    storeTail: (window.__MZ.state().project.chapters[0].content || '').slice(-90)
-  }
   out.snapshot = snapshot
   return out
 })()
@@ -279,7 +273,6 @@ async function main() {
   check('梗概也改了', a.result.summaryAfter === NEW_SUMMARY, a.result.summaryAfter)
   check('章节版本多了一份快照', (a.result.versionsAfter || 0) === (a.result.snapshot?.versions || 0) + 1, `${a.result.snapshot?.versions} → ${a.result.versionsAfter}`)
   check('气泡标成「已应用」', Boolean(a.result.appliedAt2))
-  console.log('  debug:', JSON.stringify(a.result.debug || {}).slice(0, 700))
   check('编辑器里也真的换了字（不是只改数据）', String(a.result.editorText || '').includes('那天的风'), String(a.result.editorText || '').slice(0, 80))
 
   /* ── B. anchor 对不上 ── */
