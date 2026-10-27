@@ -54,7 +54,7 @@ const GROUPS: GroupDef[] = [
       {
         key: BUDGET_KEYS.chatReply,
         label: '对话助手',
-        desc: '右侧写作对话里的一次问答。'
+        desc: '右侧写作对话里的一次问答。思考类模型的推理也吃这份额度，给少了回答会半截或直接空白，建议 8000 以上。'
       }
     ]
   },

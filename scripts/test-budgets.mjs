@@ -53,7 +53,7 @@ const FIXED_EXPECT = {
   'naming.ideas': 900,
   'style.traits': 700,
   'style.trial': 600,
-  'chat.reply': 3000,
+  'chat.reply': 8192,
   'custom.default': 3000,
   'quickstart.title': 1200,
   'quickstart.settings': 6000,
@@ -240,7 +240,7 @@ console.log('BUDGET_KEYS 结构')
 /* ── 7. 传进来的表缺条目时回落到默认值 ── */
 console.log('缺条目回落到默认')
 {
-  check('空表 → 默认固定值', resolveBudget({}, 'chat.reply') === 3000, resolveBudget({}, 'chat.reply'))
+  check('空表 → 默认固定值', resolveBudget({}, 'chat.reply') === 8192, resolveBudget({}, 'chat.reply'))
   check('空表 → 默认按字数值', resolveBudget({}, 'draft.generate', 3000) === 7624, resolveBudget({}, 'draft.generate', 3000))
   check('null → 默认值', resolveBudget(null, 'summary.auto') === 600, resolveBudget(null, 'summary.auto'))
   check(

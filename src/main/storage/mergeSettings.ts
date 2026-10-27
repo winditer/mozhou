@@ -97,6 +97,16 @@ function isWellFormed(budget: unknown): budget is TokenBudget {
 }
 
 /**
+ * 旧版本里「对话助手」的出厂额度是 3000，而对话一次问答的思考过程同样吃这份额度，
+ * 于是推理模型经常把 3000 用完、正文一个字没写（用户报的「右侧 AI 对话总是中断」）。
+ * 默认值已抬到 8192，但老配置里存着的是 3000 这个**旧默认**——不迁移的话，
+ * 升级之后症状照旧，用户还得自己去设置页翻。
+ *
+ * 只迁移「恰好等于旧默认」的那一档：作者自己调过的值（比如 5000、12000）原样保留。
+ */
+const LEGACY_CHAT_REPLY_TOKENS = 3000
+
+/**
  * 合并预算表。逐键遍历默认表（而不是用户的表），保证：
  * - 缺的 key 用默认值，老配置（压根没有 tokenBudgets）也能一次补齐；
  * - 用户表里多出来的未知 key 不会漏进结果；
@@ -112,7 +122,13 @@ function mergeTokenBudgets(raw: unknown): AppSettings['tokenBudgets'] {
   const out = {} as TokenBudgets
   for (const key of Object.keys(DEFAULT_TOKEN_BUDGETS) as BudgetKey[]) {
     const v = src[key]
-    out[key] = isWellFormed(v) ? clampBudget(v) : { ...DEFAULT_TOKEN_BUDGETS[key] }
+    const merged = isWellFormed(v) ? clampBudget(v) : { ...DEFAULT_TOKEN_BUDGETS[key] }
+    // 对话额度的旧默认迁移：3000 对思考类模型明显不够，见 LEGACY_CHAT_REPLY_TOKENS
+    if (key === 'chat.reply' && merged.kind === 'fixed' && merged.tokens === LEGACY_CHAT_REPLY_TOKENS) {
+      out[key] = { ...DEFAULT_TOKEN_BUDGETS[key] }
+      continue
+    }
+    out[key] = merged
   }
   return out
 }

@@ -91,6 +91,28 @@ console.log('单点覆盖不影响其它 key')
     keysOf(budgetOf(p, 'draft.generate')).join(','))
 }
 
+/* ── 2.5 对话额度的旧默认迁移 ── */
+console.log('对话额度旧默认迁移')
+{
+  // 旧出厂值 3000 对思考类模型不够（推理 token 也算在里面），升级后要自动抬到新默认，
+  // 否则用户升级完症状照旧，还得自己去设置页翻。
+  const legacy = mergeSettings({ tokenBudgets: { 'chat.reply': { kind: 'fixed', tokens: 3000 } } })
+  check(
+    '旧默认 3000 迁到新默认',
+    budgetOf(legacy, 'chat.reply')?.tokens === DEFAULT_SETTINGS.tokenBudgets['chat.reply'].tokens,
+    JSON.stringify(budgetOf(legacy, 'chat.reply'))
+  )
+  check(
+    '迁移后不引用默认表对象',
+    budgetOf(legacy, 'chat.reply') !== DEFAULT_SETTINGS.tokenBudgets['chat.reply'],
+    '拿到的是同一个对象，就地改会污染默认表'
+  )
+
+  // 作者自己调过的值不许动：5000 不是旧默认，原样保留
+  const custom = mergeSettings({ tokenBudgets: { 'chat.reply': { kind: 'fixed', tokens: 5000 } } })
+  check('自定义值 5000 原样保留', budgetOf(custom, 'chat.reply')?.tokens === 5000, JSON.stringify(budgetOf(custom, 'chat.reply')))
+}
+
 /* ── 3. 老配置：根本没有 settings / 没有 tokenBudgets ── */
 console.log('老配置自动补齐')
 {

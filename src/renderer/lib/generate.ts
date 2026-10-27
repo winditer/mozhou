@@ -437,6 +437,32 @@ export async function generateSummary(
   return r.text.trim()
 }
 
+/**
+ * 对话被「思考吃光额度」时的重试下限。
+ *
+ * 对话不像正文有目标字数，预算只能拍一个固定值。而推理模型的 reasoning_content
+ * 同样计入 maxTokens，3000 的额度经常只够它想完、来不及写——用户看到的
+ * 就是「AI 说了一半」甚至「一片空白」。所以正文为空时按这个下限抬高一档重试，
+ * 而不是拿同一份预算再问一遍（那只会再空一次）。
+ */
+const CHAT_RETRY_FLOOR = 8192
+/** 重试额度的上限，和预算表 clampBudget 的上限保持一致 */
+const CHAT_RETRY_CEIL = 32768
+
+export interface ChatReply {
+  text: string
+  /** 被 max_tokens 截断（有正文，但没写完） */
+  truncated: boolean
+  /** 一个正文字符都没吐出来 */
+  empty: boolean
+  /** 空正文 + finish_reason='length'：额度被思考吃掉 */
+  thoughtStarved: boolean
+  /** 这次实际用的输出额度（发生过重试时为抬高后的值） */
+  maxTokens: number
+  /** 是否因空正文重试过 */
+  retried: boolean
+}
+
 export async function generateChatReply(
   p: GenParams & {
     history: { role: 'user' | 'assistant'; content: string }[]
@@ -444,7 +470,7 @@ export async function generateChatReply(
     /** 系统文风分身库：对话也要跟书内生成用同一套生效文风 */
     library?: StyleLibrary | null
   }
-): Promise<string> {
+): Promise<ChatReply> {
   const budgets = p.budgets ?? DEFAULT_TOKEN_BUDGETS
   // 对话时必须能看到「当前这一章」的正文，否则模型只会拿到前文/设定
   const ctx = assembleContext(p.project, p.chapter, 20000, {
@@ -462,17 +488,49 @@ export async function generateChatReply(
     ...p.history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
     { role: 'user' as const, content: p.question }
   ]
-  const r = await sendChat({
+  const budget = resolveBudget(budgets, BUDGET_KEYS.chatReply)
+  let usedMax = budget
+  let r = await sendChat({
     channel: p.channel,
     model: p.model,
     messages,
     task: 'chat',
     temperature: p.temperature,
-    maxTokens: resolveBudget(budgets, BUDGET_KEYS.chatReply),
+    maxTokens: usedMax,
     onDelta: p.onDelta,
     onThought: p.onThought
   })
-  return r.text
+
+  // 空正文：把额度抬高再问一次。首轮一个字都没有时 onDelta 一次也没被调用，
+  // 上层累加的 acc 还是空串，所以重试的增量不会和上一轮拼出重复内容。
+  let retried = false
+  if (r.empty || r.thoughtStarved) {
+    const retryMax = Math.min(CHAT_RETRY_CEIL, Math.max(CHAT_RETRY_FLOOR, Math.ceil(budget * 2)))
+    if (retryMax > usedMax) {
+      p.onStage?.(`模型把 ${usedMax} 的输出额度全用在思考上了，正在用 ${retryMax} 重试…`)
+      usedMax = retryMax
+      retried = true
+      r = await sendChat({
+        channel: p.channel,
+        model: p.model,
+        messages,
+        task: 'chat',
+        temperature: p.temperature,
+        maxTokens: usedMax,
+        onDelta: p.onDelta,
+        onThought: p.onThought
+      })
+    }
+  }
+
+  return {
+    text: r.text,
+    truncated: r.finishReason === 'length',
+    empty: r.empty || r.text.length === 0,
+    thoughtStarved: Boolean(r.thoughtStarved),
+    maxTokens: usedMax,
+    retried
+  }
 }
 
 export async function generateCustom(

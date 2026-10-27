@@ -30,6 +30,7 @@ export function AIPanel({
   const [streaming, setStreaming] = useState(false)
   const [draft, setDraft] = useState('')
   const [thought, setThought] = useState('')
+  const [stage, setStage] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const resolved = resolveTaskModel(config, project, 'chat')
   const elapsed = useElapsed(streaming)
@@ -52,15 +53,19 @@ export function AIPanel({
     setInput('')
     setDraft('')
     setThought('')
+    setStage('')
     setStreaming(true)
     try {
       let acc = ''
-      const text = await generateChatReply({
+      const r = await generateChatReply({
         project,
         chapter,
         channel: resolved.channel,
         model: resolved.model,
         task: 'chat',
+        // 预算必须从设置里读：不传时 generateChatReply 会退回出厂默认（3000），
+        // 于是「设置 → 输出预算 → 对话」改了多少都不生效，长回答永远被截在同一个位置。
+        budgets: config?.settings.tokenBudgets,
         history,
         question: q,
         library: useApp.getState().styleLibrary,
@@ -70,16 +75,37 @@ export function AIPanel({
           acc += d
           setDraft(acc)
         },
-        onThought: (d) => setThought((t) => t + d)
+        onThought: (d) => setThought((t) => t + d),
+        onStage: (s) => setStage(s)
       })
-      const final = text || acc
+      const final = (r.text || acc).trim()
+      if (!final) {
+        // 一个字都没写：别往对话里塞一个空气泡，那看起来就像「AI 中断了」
+        toast(
+          r.thoughtStarved
+            ? `模型把 ${r.maxTokens} 个输出额度全用在了思考上，没有留下正文。可以换个不思考的模型，或在「设置 → 输出预算 → 对话」里把额度调大（建议 8000 以上）。`
+            : '模型这次没有返回任何正文，可以直接重发一次；若反复出现，换一个模型试试。',
+          'error'
+        )
+        return
+      }
       patchProject((p) => ({
         ...p,
         chat: [
           ...p.chat,
-          { id: uid('m'), role: 'assistant' as const, content: final, at: Date.now(), model: resolved.model }
+          {
+            id: uid('m'),
+            role: 'assistant' as const,
+            content: final,
+            at: Date.now(),
+            model: resolved.model,
+            truncated: r.truncated || undefined
+          }
         ]
       }))
+      if (r.truncated) {
+        toast(`回答被 ${r.maxTokens} 的输出上限截断，末尾不完整。可在「设置 → 输出预算 → 对话」调大额度。`, 'error')
+      }
     } catch (e) {
       const msg = (e as Error).message
       // 主动停止不算错误
@@ -88,6 +114,7 @@ export function AIPanel({
       setStreaming(false)
       setDraft('')
       setThought('')
+      setStage('')
     }
   }
 
@@ -156,6 +183,15 @@ export function AIPanel({
                   {m.role === 'user' ? <MessageSquare size={11} /> : <Sparkles size={11} />}
                   {m.role === 'user' ? '我' : 'AI'}
                   <span>· {relativeTime(m.at)}</span>
+                  {m.truncated && (
+                    <span
+                      className="chip"
+                      title="这条回答被输出上限截断，末尾是断的。可在「设置 → 输出预算 → 对话」调大额度。"
+                      style={{ height: 16, fontSize: 10, color: 'var(--warning, #B45309)' }}
+                    >
+                      已截断
+                    </span>
+                  )}
                   {m.role === 'assistant' && (
                     <button
                       className="ml-auto opacity-0 group-hover:opacity-100 text-[11px]"
@@ -197,7 +233,7 @@ export function AIPanel({
                 {/* 思考类模型可能一两分钟只吐思考：把等待进度说清楚 */}
                 {streaming && (
                   <div className="mt-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                    {streamStatus({ text: draft, thought, elapsedMs: elapsed })}
+                    {stage || streamStatus({ text: draft, thought, elapsedMs: elapsed })}
                   </div>
                 )}
               </div>

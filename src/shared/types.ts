@@ -279,6 +279,11 @@ export interface ChatMessage {
   content: string
   at: number
   model?: string
+  /**
+   * 这条回答被输出上限（max_tokens）截断了，末尾是断的。
+   * 只做界面标注，内容照旧参与后续对话——半截回答拿来接着讨论仍然有用。
+   */
+  truncated?: boolean
 }
 
 export interface ContextToggles {

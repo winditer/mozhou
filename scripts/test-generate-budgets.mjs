@@ -353,7 +353,10 @@ console.log('generateChatReply · 用 chat.reply')
     `实际 ${CAPTURED[0]?.maxTokens}`
   )
   check('最后一条是作者的问题', CAPTURED[0]?.messages.at(-1)?.content === '怎么改？')
-  check('返回了 stub 的文本', r === '他推开门。', JSON.stringify(r))
+  // generateChatReply 现在返回结构化结果（正文 + 截断/空白/是否重试过），正文取 .text
+  check('返回了 stub 的文本', r?.text === '他推开门。', JSON.stringify(r))
+  check('正常收尾不算截断也不算空', r?.truncated === false && r?.empty === false, JSON.stringify(r))
+  check('没触发重试', r?.retried === false && CAPTURED.length === 1, JSON.stringify({ retried: r?.retried, hits: CAPTURED.length }))
 }
 
 /* ── 6. generateCustom（不给显式 maxTokens）：custom.default ── */
