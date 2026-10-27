@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Project } from '@shared/types'
 import { GENRES, getGenre } from '@shared/genres'
+import { getScene } from '@shared/scenes'
 import { Button, Field, Input, Modal, Select, Textarea } from './ui'
 
 /** 封面配色：都是中低明度、白字可读的底色，和书架默认色系一致 */
@@ -63,6 +64,7 @@ export function ProjectInfoModal({
   }, [open, projectId])
 
   const genre = useMemo(() => getGenre(genreId), [genreId])
+  const scene = useMemo(() => getScene(project?.sceneId ?? ''), [project?.sceneId])
 
   const save = async (): Promise<void> => {
     if (!project) return
@@ -113,16 +115,47 @@ export function ProjectInfoModal({
               borderRadius: 8,
               background: `linear-gradient(150deg, ${cover}, color-mix(in srgb, ${cover} 55%, #000))`,
               boxShadow: 'var(--shadow)',
-              padding: 8,
-              display: 'flex',
-              alignItems: 'flex-end',
-              color: '#fff',
-              fontSize: 12,
-              fontWeight: 600,
-              lineHeight: 1.3
+              position: 'relative',
+              overflow: 'hidden',
+              color: '#fff'
             }}
           >
-            <span className="line-clamp-3">{title.trim() || '书名'}</span>
+            {/* 和书架封面同一套排布：场景图标 / 题材徽标 / 书名 / 作者 */}
+            <div style={{ position: 'absolute', left: 7, top: 6, fontSize: 15, lineHeight: 1, opacity: 0.95 }}>
+              {scene.icon}
+            </div>
+            {genre && (
+              <div
+                className="truncate"
+                style={{
+                  position: 'absolute',
+                  right: 6,
+                  top: 6,
+                  maxWidth: 58,
+                  height: 15,
+                  padding: '0 5px',
+                  borderRadius: 999,
+                  display: 'flex',
+                  alignItems: 'center',
+                  fontSize: 9,
+                  background: 'rgba(255,255,255,.22)',
+                  border: '1px solid rgba(255,255,255,.3)'
+                }}
+              >
+                {genre.name}
+              </div>
+            )}
+            <div style={{ position: 'absolute', left: 8, right: 8, bottom: 8 }}>
+              <div className="line-clamp-3" style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3 }}>
+                {title.trim() || '书名'}
+              </div>
+              <div
+                className="truncate"
+                style={{ marginTop: 3, fontSize: 9.5, lineHeight: 1.2, opacity: 0.82 }}
+              >
+                {author.trim() || '未署名'}
+              </div>
+            </div>
           </div>
           <div className="mt-2 text-[11px]" style={{ color: 'var(--text-faint)' }}>
             封面色
@@ -169,6 +202,9 @@ export function ProjectInfoModal({
             </Field>
             <Field label="题材">
               <Select value={genreId} onChange={(e) => setGenreId(e.target.value)}>
+                {/* 空值必须有自己的选项：否则浏览器把第一项「玄幻」当作已选中显示，
+                    作者以为已经选了玄幻，保存下来仍是空，封面上也就没有题材徽标。 */}
+                <option value="">未选择</option>
                 {GENRE_GROUPS.map((g) => (
                   <optgroup key={g} label={g}>
                     {GENRES.filter((x) => x.group === g).map((x) => (

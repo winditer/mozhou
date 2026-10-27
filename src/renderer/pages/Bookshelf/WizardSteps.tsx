@@ -191,12 +191,14 @@ export function CoverPreview({
   color,
   icon,
   genreName,
-  title
+  title,
+  author
 }: {
   color: string
   icon: string
   genreName: string
   title: string
+  author?: string
 }): ReactNode {
   return (
     <div>
@@ -212,13 +214,38 @@ export function CoverPreview({
         <div style={{ position: 'absolute', left: 12, top: 10, fontSize: 24, lineHeight: 1, opacity: 0.95 }}>
           {icon}
         </div>
+        {/* 与书架封面同一套：题材是右上角徽标，书名下方一行作者 */}
+        {genreName && (
+          <div
+            className="truncate"
+            style={{
+              position: 'absolute',
+              right: 8,
+              top: 8,
+              maxWidth: 84,
+              height: 19,
+              padding: '0 7px',
+              borderRadius: 999,
+              display: 'flex',
+              alignItems: 'center',
+              fontSize: 10.5,
+              color: '#fff',
+              background: 'rgba(255,255,255,.22)',
+              border: '1px solid rgba(255,255,255,.3)'
+            }}
+          >
+            {genreName}
+          </div>
+        )}
         <div style={{ position: 'absolute', left: 13, right: 13, bottom: 12, color: '#fff' }}>
-          {genreName && <div style={{ fontSize: 10.5, opacity: 0.82, marginBottom: 4 }}>{genreName}</div>}
           <div
             className="line-clamp-3"
             style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.4, textShadow: '0 1px 8px rgba(0,0,0,.22)' }}
           >
             {title || '未命名作品'}
+          </div>
+          <div className="truncate" style={{ marginTop: 4, fontSize: 11, lineHeight: 1.2, opacity: 0.82 }}>
+            {author?.trim() || '未署名'}
           </div>
         </div>
       </div>
@@ -352,6 +379,7 @@ export function GenreStep({ draft, patch }: { draft: WizardDraft; patch: DraftPa
           icon={scene.icon}
           genreName={genre?.name ?? ''}
           title={draft.title.trim()}
+          author={draft.author}
         />
       </div>
     </div>

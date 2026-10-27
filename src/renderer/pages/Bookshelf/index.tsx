@@ -112,20 +112,20 @@ function BookCard({
           {scene.icon}
         </div>
 
-        {genre && !dense && (
+        {genre && (
           <div
             className="truncate"
             style={{
               position: 'absolute',
-              right: 8,
-              top: 8,
-              maxWidth: 84,
-              height: 19,
-              padding: '0 7px',
+              right: dense ? 6 : 8,
+              top: dense ? 6 : 8,
+              maxWidth: dense ? 62 : 84,
+              height: dense ? 16 : 19,
+              padding: dense ? '0 5px' : '0 7px',
               borderRadius: 999,
               display: 'flex',
               alignItems: 'center',
-              fontSize: 10.5,
+              fontSize: dense ? 9 : 10.5,
               color: '#fff',
               background: 'rgba(255,255,255,.22)',
               border: '1px solid rgba(255,255,255,.3)',
@@ -139,20 +139,37 @@ function BookCard({
         )}
 
         <div
-          className="line-clamp-3"
           style={{
             position: 'absolute',
             left: 12,
             right: 12,
             bottom: 12,
-            color: '#fff',
-            fontSize: dense ? 12 : 17,
-            fontWeight: 600,
-            lineHeight: 1.35,
-            textShadow: '0 1px 8px rgba(0,0,0,.28)'
+            color: '#fff'
           }}
         >
-          {meta.title}
+          <div
+            className="line-clamp-3"
+            style={{
+              fontSize: dense ? 12 : 17,
+              fontWeight: 600,
+              lineHeight: 1.35,
+              textShadow: '0 1px 8px rgba(0,0,0,.28)'
+            }}
+          >
+            {meta.title}
+          </div>
+          <div
+            className="truncate"
+            style={{
+              marginTop: dense ? 3 : 5,
+              fontSize: dense ? 9.5 : 11.5,
+              lineHeight: 1.2,
+              opacity: 0.82,
+              textShadow: '0 1px 6px rgba(0,0,0,.25)'
+            }}
+          >
+            {meta.author || '未署名'}
+          </div>
         </div>
       </div>
 
