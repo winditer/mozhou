@@ -14,60 +14,21 @@
  */
 
 import type { PromptMessage } from '@shared/types'
+import {
+  type BodyParagraph,
+  escapeHtml,
+  normalizeText,
+  splitParagraphs,
+  unescapeHtml
+} from '../../../lib/paragraphs'
 
-/** 正文按 <p> 切段后的一个段落 */
-export interface BodyParagraph {
-  /** 在原始 HTML 里的起止位置，用来原位替换 */
-  start: number
-  end: number
-  /** 段落纯文本（已去掉标签） */
-  text: string
-  /** 完整 HTML 片段（含 <p> 标签） */
-  html: string
-}
-
-const HTML_ESCAPE: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' }
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>]/g, (c) => HTML_ESCAPE[c] as string)
-}
-
-function unescapeHtml(s: string): string {
-  return s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-}
-
-/**
- * 把章节 HTML 切成段落，保留每段在原串里的位置。
- *
- * 只认块级标签（p / div / h1-h6 / li / blockquote）。正文是这台编辑器产出的，
- * 结构就是这一套；用完整 DOM 解析反而会在 Electron 渲染进程里引入额外依赖。
- */
-export function splitParagraphs(html: string): BodyParagraph[] {
-  const out: BodyParagraph[] = []
-  const re = /<(p|div|h[1-6]|li|blockquote)\b[^>]*>[\s\S]*?<\/\1>/gi
-  let m: RegExpExecArray | null
-  while ((m = re.exec(html)) !== null) {
-    const whole = m[0]
-    const inner = whole.replace(/^<[^>]+>/, '').replace(/<\/[^>]+>$/, '')
-    const text = unescapeHtml(inner.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim()
-    // 空段（纯 <br> 之类）不参与定位，但位置照样记着，替换时不会错位
-    out.push({ start: m.index, end: m.index + whole.length, text, html: whole })
-  }
-  return out
-}
+/* 切段与正则归一化搬去了 lib/paragraphs.ts：对话改稿要按 anchor 定位段落，
+   必须和体检用同一套规则，两处各写一份迟早分叉。这里 re-export，既有 import 不用改。 */
+export type { BodyParagraph }
+export { splitParagraphs }
 
 /** 归一化：去掉空白与常见标点差异，好让「摘录」和「原文」对得上 */
-function normalize(s: string): string {
-  return s
-    .replace(/[\s\u3000]+/g, '')
-    .replace(/[，。、；：！？“”‘’（）《》〈〉—…·,.!?;:"'()\[\]<>]/g, '')
-}
+const normalize = normalizeText
 
 export interface LocateResult {
   /** 命中的段落下标（升序去重） */

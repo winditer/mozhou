@@ -1,0 +1,495 @@
+/**
+ * 把 `mz-edit` 的 op 变成「能画在界面上、能一键应用」的具体改动。
+ *
+ * 两件事分开做，因为它们的正确性标准不同：
+ *
+ *   resolveEdits —— 只读。逐条回正文/大纲/设定里定位，产出改前/改后。
+ *                   定位不到就是定位不到，绝不猜、也不许退化成整章重写。
+ *   applyResolved —— 纯函数。拿已经定好位的改动一次算出新 Project。
+ *
+ * 分成纯函数是因为它最需要被测：改稿是这套功能里唯一不可逆的动作，
+ * 而纯函数能在 node 里跑几百个用例，不用起 Electron。
+ */
+import type { Chapter, OutlineNode, Project } from '@shared/types'
+import { uid } from '@shared/utils'
+import {
+  BIBLE_SCHEMA,
+  resolveChapterRef,
+  resolveOutlineNode,
+  type BibleCollection,
+  type EditOp
+} from '@shared/editProtocol'
+import { paragraphMatches, splitParagraphs, textToParagraph } from './paragraphs'
+
+export type EditStatus = 'found' | 'ambiguous' | 'not-found'
+
+export interface ResolvedEdit {
+  op: EditOp
+  status: EditStatus
+  /** 这一条改的是哪一类东西：正文段落 / 字段 / 新增条目 */
+  display: 'paragraph' | 'field' | 'new-entry'
+  /** 给人看的一行标题，如「第3章 第 4 段」或「角色卡·林昭·动机」 */
+  label: string
+  chapterId?: string
+  chapterTitle?: string
+  /** 正文段落改动时是原段落纯文本；字段改动时是旧值；新增条目时为空 */
+  before: string
+  /** 新内容 */
+  after: string
+  /** 正文改动的段落下标（applyResolved 用它定位） */
+  paragraphIndex?: number
+  /** 歧义时所有命中段落下标 */
+  hits?: number[]
+  /** 补充说明：候选章节、大纲路径、全书命中数等 */
+  note?: string
+  /** 设定改动：集合与识别名，apply 时用来回写 */
+  collection?: BibleCollection
+  entryName?: string
+  /** 设定改动的字段名 */
+  fieldName?: string
+}
+
+/* ────────────────────────────── 定位 ────────────────────────────── */
+
+const MAX_LITERAL_HITS = 500
+
+function chapterLabel(c: Chapter): string {
+  return c.title || '（未命名章节）'
+}
+
+/** 在章节正文里找 anchor 落在哪些段。跳过标题段——那是章名，改了文档结构就散 */
+function findParagraphs(chapter: Chapter, anchor: string): { indexes: number[]; exact: boolean } {
+  const paragraphs = splitParagraphs(chapter.content)
+  const indexes: number[] = []
+  let exact = false
+  paragraphs.forEach((p, i) => {
+    if (/^<(h[1-6])\b/i.test(p.html)) return
+    const hit = paragraphMatches(p.text, anchor)
+    if (!hit) return
+    if (hit === 'exact') exact = true
+    indexes.push(i)
+  })
+  return { indexes, exact }
+}
+
+/**
+ * 逐条定位。返回顺序与入参一致，界面按章分组时再排。
+ *
+ * 三种结果都要能画：found 可勾选；ambiguous 列出所有命中段让作者自己在对话里说清；
+ * not-found 红字说明「第 3 章里没找到这句话」——作者一句话就能补正，猜反而是灾难。
+ */
+export function resolveEdits(project: Project, ops: EditOp[]): ResolvedEdit[] {
+  // 一条 op 可能展成多条改动（全书替换会命中很多段、设定改动会改很多字段），
+  // 所以这里 flatMap，界面上一行一条，作者才能逐条否决
+  return ops.flatMap((op) => {
+    const r = resolveOne(project, op)
+    return Array.isArray(r) ? r : [r]
+  })
+}
+
+function resolveOne(project: Project, op: EditOp): ResolvedEdit | ResolvedEdit[] {
+  switch (op.op) {
+    case 'replace_paragraph':
+    case 'insert_paragraph':
+    case 'delete_paragraph': {
+      const ref = resolveChapterRef(project, op.chapter ?? '')
+      if (!ref.chapterId) {
+        const cands = ref.candidates.map((c) => c.title)
+        return {
+          op,
+          status: 'not-found',
+          display: 'paragraph',
+          label: op.chapter ? `章节「${op.chapter}」` : '（未指定章节）',
+          before: '',
+          after: op.after ?? '',
+          note: cands.length
+            ? `这本书里有 ${cands.length} 章对得上，请指明是哪一个：${cands.join('、')}`
+            : '书里找不到这一章，请用完整章节标题再试一次'
+        }
+      }
+      const chapter = project.chapters.find((c) => c.id === ref.chapterId) as Chapter
+      const anchor = op.anchor ?? ''
+      const { indexes } = findParagraphs(chapter, anchor)
+      const chapters = splitParagraphs(chapter.content)
+      if (!indexes.length) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'paragraph',
+          label: chapterLabel(chapter),
+          chapterId: chapter.id,
+          chapterTitle: chapterLabel(chapter),
+          before: '',
+          after: op.after ?? '',
+          note: '这一章里没找到这句话，请让 AI 重新摘录原文'
+        }
+      }
+      if (indexes.length > 1) {
+        return {
+          op,
+          status: 'ambiguous',
+          display: 'paragraph',
+          label: chapterLabel(chapter),
+          chapterId: chapter.id,
+          chapterTitle: chapterLabel(chapter),
+          before: chapters[indexes[0]].text,
+          after: op.after ?? '',
+          hits: indexes.map((i) => i + 1),
+          note: `同样的话在这一章出现了 ${indexes.length} 次（第 ${indexes.map((i) => i + 1).join('、')} 段），请指明改哪一段`
+        }
+      }
+      const i = indexes[0]
+      const p = chapters[i]
+      return {
+        op,
+        status: 'found',
+        display: 'paragraph',
+        label: `${chapterLabel(chapter)} · 第 ${i + 1} 段`,
+        chapterId: chapter.id,
+        chapterTitle: chapterLabel(chapter),
+        before: op.op === 'insert_paragraph' ? '' : p.text,
+        after: op.op === 'delete_paragraph' ? '' : (op.after ?? ''),
+        paragraphIndex: i,
+        note: op.op === 'insert_paragraph' ? `在「${p.text.slice(0, 18)}…」之后插入一段` : undefined
+      }
+    }
+
+    case 'replace_literal': {
+      const chapters =
+        op.scope === 'chapter'
+          ? (() => {
+              const ref = resolveChapterRef(project, op.chapter ?? '')
+              return ref.chapterId ? project.chapters.filter((c) => c.id === ref.chapterId) : []
+            })()
+          : project.chapters
+      if (!chapters.length) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'paragraph',
+          label: op.chapter ? `章节「${op.chapter}」` : '全书',
+          before: '',
+          after: op.to ?? '',
+          note: '找不到要替换的章节'
+        }
+      }
+      const from = op.from ?? ''
+      const to = op.to ?? ''
+      const out: ResolvedEdit[] = []
+      for (const c of chapters) {
+        const paragraphs = splitParagraphs(c.content)
+        paragraphs.forEach((p, i) => {
+          if (/^<(h[1-6])\b/i.test(p.html)) return
+          if (!p.text.includes(from)) return
+          const count = p.text.split(from).length - 1
+          out.push({
+            op,
+            status: 'found',
+            display: 'paragraph',
+            label: `${chapterLabel(c)} · 第 ${i + 1} 段`,
+            chapterId: c.id,
+            chapterTitle: chapterLabel(c),
+            before: p.text,
+            after: p.text.split(from).join(to),
+            paragraphIndex: i,
+            note: count > 1 ? `这一段里有 ${count} 处` : undefined
+          })
+        })
+      }
+      if (!out.length) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'paragraph',
+          label: op.scope === 'chapter' ? `章节「${op.chapter}」` : '全书',
+          before: '',
+          after: to,
+          note: `「${from}」在${op.scope === 'chapter' ? '这一章' : '全书'}里一次都没出现`
+        }
+      }
+      if (out.length > MAX_LITERAL_HITS) {
+        // 极端情况不静默截断：保留前 N 条，并把总量说清楚
+        const kept = out.slice(0, MAX_LITERAL_HITS)
+        kept[0] = {
+          ...kept[0],
+          note: `命中 ${out.length} 段，先列出前 ${MAX_LITERAL_HITS} 段；建议把范围缩到单章再改`
+        }
+        return kept
+      }
+      out[0] = { ...out[0], note: [out[0].note, `共 ${out.length} 段命中`].filter(Boolean).join('；') }
+      return out
+    }
+
+    case 'set_chapter_summary': {
+      const ref = resolveChapterRef(project, op.chapter ?? '')
+      if (!ref.chapterId) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'field',
+          label: op.chapter ? `章节「${op.chapter}」` : '（未指定章节）',
+          before: '',
+          after: op.after ?? '',
+          note: ref.candidates.length
+            ? `对得上的章节有：${ref.candidates.map((c) => c.title).join('、')}`
+            : '书里找不到这一章'
+        }
+      }
+      const chapter = project.chapters.find((c) => c.id === ref.chapterId) as Chapter
+      return {
+        op,
+        status: 'found',
+        display: 'field',
+        label: `${chapterLabel(chapter)} · 梗概`,
+        chapterId: chapter.id,
+        chapterTitle: chapterLabel(chapter),
+        before: chapter.summary ?? '',
+        after: op.after ?? ''
+      }
+    }
+
+    case 'set_outline_node': {
+      const ref = resolveOutlineNode(project.outline, op.node ?? '')
+      if (!ref.node) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'field',
+          label: `大纲节点「${op.node ?? ''}」`,
+          before: '',
+          after: op.after ?? '',
+          note: ref.candidates.length
+            ? `同名的节点有 ${ref.candidates.length} 个：${ref.candidates.map((c) => c.title).join('、')}`
+            : '大纲里找不到这个节点'
+        }
+      }
+      const field = op.field ?? 'summary'
+      const oldVal = field === 'title' ? ref.node.title : field === 'summary' ? ref.node.summary : ref.node.status
+      return {
+        op,
+        status: 'found',
+        display: 'field',
+        label: `大纲 · ${ref.path.join(' › ')} · ${field === 'title' ? '标题' : field === 'summary' ? '情节点' : '状态'}`,
+        before: String(oldVal ?? ''),
+        after: op.after ?? '',
+        note: ref.path.length > 1 ? ref.path.slice(0, -1).join(' › ') : undefined
+      }
+    }
+
+    case 'bible_upsert': {
+      const collection = op.collection as BibleCollection
+      const schema = BIBLE_SCHEMA[collection]
+      const list = (project.bible?.[collection] ?? []) as unknown as Record<string, unknown>[]
+      const key = schema.keyField
+      const name = (op.name ?? '').trim()
+      const existing = list.find((e) => String(e[key] ?? '').trim() === name)
+      const fields = op.fields ?? {}
+      if (!existing) {
+        const summary = Object.entries(fields)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join('　')
+        return {
+          op,
+          status: 'found',
+          display: 'new-entry',
+          label: `新增 ${collectionLabel(collection)}「${name}」`,
+          before: '',
+          after: summary,
+          collection,
+          entryName: name
+        }
+      }
+      // 已存在：每条字段一行，方便逐条否决
+      const changed = Object.entries(fields).filter(([k, v]) => String(existing[k] ?? '') !== String(v))
+      if (!changed.length) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'field',
+          label: `${collectionLabel(collection)}「${name}」`,
+          before: '',
+          after: '',
+          note: '这条设定已经和 AI 写的完全一样，不需要改'
+        }
+      }
+      return changed.map(([k, v]) => ({
+        op,
+        status: 'found' as const,
+        display: 'field' as const,
+        label: `${collectionLabel(collection)}「${name}」· ${FIELD_LABEL[k] ?? k}`,
+        before: String(existing[k] ?? ''),
+        after: v,
+        collection,
+        entryName: name,
+        fieldName: k
+      }))
+    }
+  }
+}
+
+function collectionLabel(c: BibleCollection): string {
+  return { characters: '角色', world: '世界观', terms: '词条', timeline: '时间线', threads: '线索' }[c]
+}
+
+/**
+ * 设定字段的中文名。界面上一行一条「角色「林昭」· 动机」比「· motivation」好读得多，
+ * 而模型写的是英文字段名，所以在这里换一次，别指望模型写中文键。
+ */
+const FIELD_LABEL: Record<string, string> = {
+  name: '姓名',
+  role: '身份',
+  age: '年龄',
+  identity: '身世',
+  appearance: '外貌',
+  personality: '性格',
+  motivation: '动机',
+  flaw: '缺陷',
+  arc: '成长线',
+  speechStyle: '说话方式',
+  notes: '备注',
+  hidden: '隐藏',
+  title: '标题',
+  category: '分类',
+  content: '内容',
+  visible: '注入给 AI',
+  term: '词条',
+  definition: '释义',
+  time: '时间',
+  desc: '描述',
+  setup: '铺垫',
+  payoff: '回收',
+  status: '状态',
+  level: '层级'
+}
+
+/* ────────────────────────────── 应用 ────────────────────────────── */
+
+/** 正文改动按段落起止位置倒序回填，倒序才不会让后面的偏移失效 */
+function applyChapterTextEdits(chapter: Chapter, edits: ResolvedEdit[]): string {
+  const paragraphs = splitParagraphs(chapter.content)
+  type Splice = { start: number; end: number; text: string }
+  const splices: Splice[] = []
+  const seen = new Set<number>()
+
+  for (const e of edits) {
+    if (e.display !== 'paragraph' || e.status !== 'found') continue
+    const i = e.paragraphIndex
+    if (i === undefined || !paragraphs[i]) continue
+    // 同一段被两条 op 点名时只认第一条：两条一起上要么互相覆盖，要么把段落拼坏
+    if (seen.has(i)) continue
+    seen.add(i)
+    const p = paragraphs[i]
+    if (e.op.op === 'delete_paragraph') {
+      splices.push({ start: p.start, end: p.end, text: '' })
+    } else if (e.op.op === 'insert_paragraph') {
+      splices.push({ start: p.end, end: p.end, text: textToParagraph(e.after) })
+    } else {
+      splices.push({ start: p.start, end: p.end, text: textToParagraph(e.after) })
+    }
+  }
+  if (!splices.length) return chapter.content
+  splices.sort((a, b) => b.start - a.start)
+  let html = chapter.content
+  for (const s of splices) {
+    html = html.slice(0, s.start) + s.text + html.slice(s.end)
+  }
+  return html
+}
+
+function updateOutlineNode(nodes: OutlineNode[], nodeId: string, field: string, value: string): OutlineNode[] {
+  return nodes.map((n) => {
+    if (n.id === nodeId) {
+      if (field === 'title') return { ...n, title: value }
+      if (field === 'status') return { ...n, status: value as OutlineNode['status'] }
+      return { ...n, summary: value }
+    }
+    return n.children?.length ? { ...n, children: updateOutlineNode(n.children, nodeId, field, value) } : n
+  })
+}
+
+/** 设定条目：旧条目按字段覆盖，新条目按集合的字段表补空值 */
+function upsertBibleEntry(project: Project, e: ResolvedEdit): Project['bible'] {
+  const collection = e.collection as BibleCollection
+  const schema = BIBLE_SCHEMA[collection]
+  const key = schema.keyField
+  const list = [...((project.bible?.[collection] ?? []) as unknown as Record<string, unknown>[])]
+  const name = (e.entryName ?? '').trim()
+
+  if (e.display === 'new-entry') {
+    const base: Record<string, unknown> = { id: uid('b') }
+    for (const f of schema.fields) base[f] = ''
+    for (const b of schema.bools ?? []) base[b] = b === 'visible'
+    base[key] = name
+    // what：新条目的字段来自 op.fields，这里从 after 文本里还原不现实，
+    // 所以由 applyResolved 直接把 op.fields 传进来（见下方调用点）。
+    const fields = (e.op.fields ?? {}) as Record<string, string>
+    for (const [k, v] of Object.entries(fields)) {
+      base[k] = (schema.bools ?? []).includes(k) ? v === 'true' : v
+    }
+    if (collection === 'characters') base.relations = []
+    list.push(base)
+  } else {
+    const idx = list.findIndex((x) => String(x[key] ?? '').trim() === name)
+    if (idx >= 0 && e.fieldName) {
+      const patch: Record<string, unknown> = { [e.fieldName]: e.after }
+      if ((schema.bools ?? []).includes(e.fieldName)) patch[e.fieldName] = e.after === 'true'
+      list[idx] = { ...list[idx], ...patch }
+    }
+  }
+  return { ...project.bible, [collection]: list } as Project['bible']
+}
+
+/**
+ * 纯函数：把已定位的改动一次算进新 Project。
+ *
+ * 只处理 status='found' 的条目；ambiguous / not-found 由调用方过滤，
+ * 这里再兜一层，避免误传。
+ */
+export function applyResolved(project: Project, edits: ResolvedEdit[]): Project {
+  const usable = edits.filter((e) => e.status === 'found')
+  if (!usable.length) return project
+
+  let next: Project = { ...project }
+
+  // 正文：按章归组，一章只重算一次
+  const byChapter = new Map<string, ResolvedEdit[]>()
+  for (const e of usable) {
+    if (e.display !== 'paragraph' || !e.chapterId) continue
+    if (!byChapter.has(e.chapterId)) byChapter.set(e.chapterId, [])
+    ;(byChapter.get(e.chapterId) as ResolvedEdit[]).push(e)
+  }
+  if (byChapter.size) {
+    next = {
+      ...next,
+      chapters: next.chapters.map((c) => {
+        const list = byChapter.get(c.id)
+        if (!list) return c
+        const content = applyChapterTextEdits(c, list)
+        return content === c.content ? c : { ...c, content, updatedAt: Date.now() }
+      })
+    }
+  }
+
+  // 梗概与大纲节点
+  for (const e of usable) {
+    if (e.display !== 'field') continue
+    if (e.op.op === 'set_chapter_summary' && e.chapterId) {
+      next = {
+        ...next,
+        chapters: next.chapters.map((c) => (c.id === e.chapterId ? { ...c, summary: e.after, updatedAt: Date.now() } : c))
+      }
+    } else if (e.op.op === 'set_outline_node') {
+      const ref = resolveOutlineNode(next.outline, e.op.node ?? '')
+      if (ref.node) {
+        next = { ...next, outline: updateOutlineNode(next.outline, ref.node.id, e.op.field ?? 'summary', e.after) }
+      }
+    }
+  }
+
+  // 设定库
+  for (const e of usable) {
+    if (e.op.op === 'bible_upsert') next = { ...next, bible: upsertBibleEntry(next, e) }
+  }
+
+  return next
+}
