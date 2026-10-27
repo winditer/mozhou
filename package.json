@@ -37,7 +37,9 @@
     "e2e:chat": "node scripts/e2e-chat-reply.cjs",
     "test:audit-chapter-parse": "node scripts/test-audit-chapter-parse.mjs",
     "test:ai-flavor": "node scripts/test-ai-flavor.mjs",
-    "test:ai-flavor-rewrite": "node scripts/test-ai-flavor-rewrite.mjs"
+    "test:ai-flavor-rewrite": "node scripts/test-ai-flavor-rewrite.mjs",
+    "test:edit-protocol": "node scripts/test-edit-protocol.mjs",
+    "test:apply-edits": "node scripts/test-apply-edits.mjs"
   },
   "dependencies": {
     "@tiptap/extension-character-count": "^3.32.0",
