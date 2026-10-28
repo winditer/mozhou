@@ -3,13 +3,14 @@ import type { Chapter, Project } from '@shared/types'
 import { estimateTokens, relativeTime, uid } from '@shared/utils'
 import { resolveTaskModel, useApp } from '../store/app'
 import { assembleContext } from '../lib/prompt'
-import { generateChatReply } from '../lib/generate'
+import { generateChatReply, generateDraft } from '../lib/generate'
 import { abortChat } from '../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../lib/stream'
 import { Button, IconButton, Segmented, Switch, Textarea } from './ui'
 import { ChatEditPreview } from './ChatEditPreview'
 import { parseEditBlock } from '@shared/editProtocol'
 import { resolveEdits, type ResolvedEdit } from '../lib/applyEdits'
+import { runDraftJobs, type DraftJob, type DraftProgress } from '../lib/draftJobs'
 import { SkillsPicker } from './SkillsPicker'
 import { Check, Eye, EyeOff, MessageSquare, Send, Sparkles, Square, Trash2, Undo2, Wand2 } from 'lucide-react'
 
@@ -34,6 +35,85 @@ export function AIPanel({
     return () => clearInterval(t)
   }, [lastEditUndo])
   const canUndo = Boolean(lastEditUndo && now - lastEditUndo.at < 30_000)
+  /**
+   * 应用完建章之后去写稿。
+   *
+   * 章节 id 不能从改动里拿（建章是 applyEditBatch 里现生成的），所以按标题回查——
+   * 标题在定位层已经去过重，回查是准的。
+   */
+  const startDrafts = async (kept: ResolvedEdit[]): Promise<void> => {
+    const st = useApp.getState()
+    const project0 = st.project
+    if (!project0) return
+    const jobs: DraftJob[] = []
+    for (const e of kept) {
+      if (e.draftTarget) {
+        const ch = project0.chapters.find((c) => c.title === e.draftTarget?.title)
+        if (ch) jobs.push({ chapterId: ch.id, title: ch.title, targetWords: e.draftTarget.targetWords, continueOnly: false })
+      } else if (e.writeTarget) {
+        const ch = project0.chapters.find((c) => c.id === e.writeTarget?.chapterId)
+        jobs.push({
+          chapterId: e.writeTarget.chapterId,
+          title: ch?.title ?? '这一章',
+          targetWords: e.writeTarget.targetWords,
+          continueOnly: e.writeTarget.continueOnly
+        })
+      }
+    }
+    if (!jobs.length) return
+
+    const picked = resolveTaskModel(st.config, project0, 'draft')
+    if (!picked) {
+      toast('没有配置起草模型，章建好了但没写稿。去设置里选一个模型，再说「写第 N 章」即可。', 'error')
+      return
+    }
+    stopDraftRef.current = false
+    setDrafting({
+      chapterId: jobs[0].chapterId,
+      title: jobs[0].title,
+      written: 0,
+      target: jobs[0].targetWords,
+      index: 0,
+      total: jobs.length
+    })
+    const res = await runDraftJobs(jobs, {
+      generate: (a) =>
+        generateDraft({
+          project: a.project,
+          chapter: a.chapter,
+          channel: picked.channel,
+          model: picked.model,
+          task: 'draft',
+          temperature: st.config?.settings.temperature ?? 0.85,
+          library: st.styleLibrary,
+          skillLibrary: st.skillLibrary,
+          conventions: st.config?.settings.genreConventions,
+          budgets: st.config?.settings.tokenBudgets,
+          instruction: a.instruction,
+          targetWords: a.targetWords,
+          existingWords: a.existingWords,
+          onDelta: a.onDelta,
+          onStage: a.onStage,
+          onThought: a.onThought
+        }),
+      getProject: () => useApp.getState().project,
+      patch: (id, patch) => useApp.getState().patchChapter(id, patch),
+      focus: (id) => useApp.getState().setActiveChapter(id),
+      onProgress: (p) => setDrafting(p),
+      onStage: (stage) => setDrafting((d) => (d ? { ...d, title: stage } : d)),
+      shouldStop: () => stopDraftRef.current,
+      flushMs: 500
+    })
+    setDrafting(null)
+    if (res.stopped) toast('写稿已停止，已写的部分留在正文里；说「继续写这一章」可以接着写。', 'error')
+    else if (res.failed && !res.ok) toast('写稿失败，章建好了但正文是空的。说「写第 N 章」可以重试。', 'error')
+    else if (res.ok) toast(`写完了 ${res.ok} 章初稿，可在章节版本历史里回退。`, 'ok')
+  }
+
+
+  // 写稿任务的进度（null = 没在写）；stopDraftRef 用 ref 是因为停止要给 runDraftJobs 读到最新值
+  const [drafting, setDrafting] = useState<DraftProgress | null>(null)
+  const stopDraftRef = useRef(false)
   // 标签页是本地 state，但外部（截图脚本、E2E）需要能切到「上下文」去看注入预览。
   // 挂一个只读跳转钩子，行为与点标签页完全一致。
   const [tab, setTab] = useState<'chat' | 'context'>('chat')
@@ -177,6 +257,24 @@ export function AIPanel({
           >
             <Undo2 size={10} /> 撤销改稿
           </button>
+        )}
+        {drafting && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10.5px] tabular-nums" style={{ color: 'var(--accent)' }} title={drafting.title}>
+              写作中 {drafting.written}/{drafting.target}
+            </span>
+            <button
+              className="chip surface-hover"
+              style={{ height: 20, padding: '0 6px', fontSize: 10.5 }}
+              title="停下这次写稿，已写的部分会留在正文里"
+              onClick={() => {
+                stopDraftRef.current = true
+                abortChat()
+              }}
+            >
+              停止
+            </button>
+          </div>
         )}
         {project.chat.length > 0 && tab === 'chat' && (
           <IconButton
@@ -369,6 +467,7 @@ export function AIPanel({
           setPreview(null)
           setNow(Date.now())
           toast(`已应用 ${kept.length} 处修改，正文可在章节版本历史里回退。`, 'ok')
+          void startDrafts(kept)
         }}
       />
     </div>

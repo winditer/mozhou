@@ -159,6 +159,24 @@ function EditRow({ edit, off, onToggle }: { edit: ResolvedEdit; off: boolean; on
           <AlertTriangle size={11} style={{ color: 'var(--warning, #B45309)' }} />
         )}
         <span style={{ color: 'var(--text-dim)' }}>{edit.label}</span>
+        {edit.draftTarget && (
+          <span
+            className="chip shrink-0"
+            style={{ height: 16, padding: '0 6px', fontSize: 10, color: 'var(--accent)' }}
+            title="确认后会用「起草」预算写这一章的初稿，进度在右侧面板顶部显示"
+          >
+            写稿
+          </span>
+        )}
+        {edit.writeTarget && (
+          <span
+            className="chip shrink-0"
+            style={{ height: 16, padding: '0 6px', fontSize: 10, color: 'var(--accent)' }}
+            title="确认后按目标字数写这一章"
+          >
+            {edit.writeTarget.continueOnly ? '续写' : '起草'}
+          </span>
+        )}
         {edit.chapterCorrected && (
           <span
             className="chip shrink-0"
