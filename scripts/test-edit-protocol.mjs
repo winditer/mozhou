@@ -155,6 +155,13 @@ console.log('必填校验')
     [{ op: 'add_outline_node', title: '第4章 灰线', parent: '第一卷', status: 'planned' }, true],
     [{ op: 'add_outline_node', title: '第4章 灰线', status: 'finished' }, false],
     [{ op: 'add_outline_node', summary: '没有标题' }, false],
+    [{ op: 'create_chapter', title: '第30章 027', summary: '陈屿追编号', draft: true }, true],
+    [{ op: 'create_chapter', title: '第30章 027', targetWords: 2400 }, true],
+    [{ op: 'create_chapter', summary: '没有标题' }, false],
+    [{ op: 'create_chapter', title: '第30章', targetWords: 40 }, false],
+    [{ op: 'create_chapter', title: '第30章', draft: 'yes' }, false],
+    [{ op: 'write_chapter', chapter: '第30章' }, true],
+    [{ op: 'write_chapter' }, false],
     [{ op: 'bible_upsert', collection: 'characters', name: '林昭', fields: { motivation: 'x' } }, true],
     [{ op: 'bible_upsert', collection: 'characters', name: '林昭', fields: { unknownField: 'x' } }, false],
     [{ op: 'bible_upsert', collection: 'nope', name: '林昭', fields: { motivation: 'x' } }, false],
@@ -253,8 +260,19 @@ console.log('提示词')
   const p = renderEditPrompt()
   check('包含围栏名', p.includes('mz-edit'))
   check(
-    '八种 op 全列出',
-    ['replace_paragraph', 'insert_paragraph', 'delete_paragraph', 'replace_literal', 'set_chapter_summary', 'set_outline_node', 'add_outline_node', 'bible_upsert'].every((k) => p.includes(k))
+    '十种 op 全列出',
+    [
+      'replace_paragraph',
+      'insert_paragraph',
+      'delete_paragraph',
+      'replace_literal',
+      'set_chapter_summary',
+      'set_outline_node',
+      'add_outline_node',
+      'create_chapter',
+      'write_chapter',
+      'bible_upsert'
+    ].every((k) => p.includes(k))
   )
   check('提到 anchor 要逐字', p.includes('逐字'))
   check('提到上限', p.includes(String(MAX_EDITS)))

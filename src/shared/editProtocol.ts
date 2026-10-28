@@ -27,6 +27,8 @@ export type EditOpKind =
   | 'set_chapter_summary'
   | 'set_outline_node'
   | 'add_outline_node'
+  | 'create_chapter'
+  | 'write_chapter'
   | 'bible_upsert'
 
 export const EDIT_OP_KINDS: EditOpKind[] = [
@@ -37,6 +39,8 @@ export const EDIT_OP_KINDS: EditOpKind[] = [
   'set_chapter_summary',
   'set_outline_node',
   'add_outline_node',
+  'create_chapter',
+  'write_chapter',
   'bible_upsert'
 ]
 
@@ -97,6 +101,10 @@ export interface EditOp {
   summary?: string
   /** add_outline_node：新节点状态，默认 planned */
   status?: OutlineNode['status']
+  /** create_chapter：新章目标字数，缺省取本书 settings.targetWordsPerChapter */
+  targetWords?: number
+  /** create_chapter：应用后是否当场写初稿。默认 false——「补大纲」不该顺手写两章正文 */
+  draft?: boolean
   field?: 'title' | 'summary' | 'status'
   collection?: BibleCollection
   /** 设定条目的识别名（characters 用 name，其余用 title/term） */
@@ -279,6 +287,32 @@ export function validateOp(item: unknown, index: number): { op?: EditOp; error?:
           status: status as OutlineNode['status'] | undefined
         }
       }
+    }
+    case 'create_chapter': {
+      if (!need(o.title)) return { error: `${at}：缺少 title（章节标题）` }
+      let targetWords: number | undefined
+      if (o.targetWords !== undefined && o.targetWords !== null) {
+        const n = Number(o.targetWords)
+        // 300 字以下不像一章，20000 以上一次生成必然跑很久：两头都挡掉，比事后解释便宜
+        if (!Number.isFinite(n) || n < 300 || n > 20000) return { error: `${at}：targetWords 需在 300–20000 之间` }
+        targetWords = Math.round(n)
+      }
+      if (o.draft !== undefined && typeof o.draft !== 'boolean') return { error: `${at}：draft 只能是 true / false` }
+      return {
+        op: {
+          op: 'create_chapter',
+          title: (o.title as string).trim(),
+          summary: isText(o.summary) ? o.summary : undefined,
+          targetWords,
+          draft: o.draft === true,
+          after: isText(o.after) && o.after.trim() ? o.after : undefined,
+          parent: isText(o.parent) && o.parent.trim() ? o.parent : undefined
+        }
+      }
+    }
+    case 'write_chapter': {
+      if (!need(o.chapter)) return { error: `${at}：缺少 chapter（要写哪一章）` }
+      return { op: { op: 'write_chapter', chapter: o.chapter as string } }
     }
     case 'bible_upsert': {
       const collection = o.collection
@@ -470,7 +504,9 @@ ${currentChapterTitle ? `作者此刻正在看的是「${currentChapterTitle}」
 4. replace_paragraph / insert_paragraph 的 after 可以是多段：用空行分隔，一段一行。
 5. 拿不准原文就说明白，不要猜——anchor 对不上时这条改动会被整个丢弃，作者只会看到「找不到原文」。
 6. 要「补第 30 章的大纲」而大纲里还没有这一章时，用 add_outline_node 新增，别用 set_outline_node —— 后者只能改已有的，找不到就整条作废。
-7. 自然语言的回答照常写给作者看，改稿块放在最后。
+7. 「补第 30 章的大纲」这种只要计划的事，用 add_outline_node；作者说「建第 30 章」是要真章节和正文，用 create_chapter。
+8. draft 只在作者明确要正文时给 true（「建第 30 章并写出来」「把这章补完」）。一轮最多 2 章带 draft。
+9. 自然语言的回答照常写给作者看，改稿块放在最后。
 
 可用操作：
 - replace_paragraph：换掉 anchor 所在的整段。字段 chapter / anchor / after
@@ -480,5 +516,7 @@ ${currentChapterTitle ? `作者此刻正在看的是「${currentChapterTitle}」
 - set_chapter_summary：重写章节梗概。字段 chapter / after
 - set_outline_node：改**已有**大纲节点。字段 node / field（title|summary|status）/ after
 - add_outline_node：大纲里还没有这一章时，新增一个节点。字段 title / summary（情节点）/ status（默认 planned）/ parent（卷标题，省略则挂最后一卷）
+- create_chapter：新建一章（同时补一个同名大纲节点）。字段 title / summary（章梗概）/ targetWords / draft（true=建完就写初稿，默认 false）/ after（插在哪一章之后，省略=书尾）/ parent（大纲节点挂哪一卷）
+- write_chapter：给**已存在**的章写初稿或接着写。字段 chapter
 - bible_upsert：新增或更新设定条目。字段 collection（characters|world|terms|timeline|threads）/ name / fields`
 }

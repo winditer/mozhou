@@ -409,6 +409,19 @@ function resolveOne(project: Project, op: EditOp): ResolvedEdit | ResolvedEdit[]
       }
     }
 
+    // 协议先落地、定位与应用留到下一步：这里显式拒绝，别让作者的改动悄悄消失
+    case 'create_chapter':
+    case 'write_chapter':
+      return {
+        op,
+        status: 'not-found',
+        display: 'new-entry',
+        label: op.op === 'create_chapter' ? `新建章节「${op.title ?? ''}」` : `为「${op.chapter ?? ''}」写稿`,
+        before: '',
+        after: '',
+        note: '当前版本还不会执行这个操作'
+      }
+
     case 'bible_upsert': {
       const collection = op.collection as BibleCollection
       const schema = BIBLE_SCHEMA[collection]
