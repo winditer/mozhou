@@ -304,6 +304,8 @@ export interface ChatMessage {
   edits?: EditOp[]
   /** 这批改动被应用的时间。有值就置灰按钮，避免同一批改两次 */
   editsAppliedAt?: number
+  /** 应用后写稿写进去的字数（只有 create_chapter(draft) / write_chapter 才有） */
+  draftWords?: number
   /** 解析编辑块失败的原因，气泡下方显示，不许静默 */
   editsError?: string
 }

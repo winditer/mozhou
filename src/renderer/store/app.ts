@@ -99,6 +99,8 @@ interface AppState {
   applyEditBatch: (edits: ResolvedEdit[]) => void
   /** 撤销上一次对话改稿（界面只在 30 秒内给入口） */
   undoLastEditBatch: () => void
+  /** 外部写入正文之后（对话写稿、批量改动）让编辑器重新读一次 store */
+  markExternalEdit: () => void
   /** 上一次改稿前的现场，供撤销用；重启即失效是有意的 */
   lastEditUndo: EditUndo | null
   /**
@@ -312,6 +314,10 @@ export const useApp = create<AppState>((set, get) => ({
     })
     set({ externalEditRev: get().externalEditRev + 1 })
     void get().flush()
+  },
+
+  markExternalEdit() {
+    set({ externalEditRev: get().externalEditRev + 1 })
   },
 
   undoLastEditBatch() {

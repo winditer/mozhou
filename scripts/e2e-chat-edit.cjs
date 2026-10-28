@@ -54,8 +54,28 @@ function startMock(mode, requests) {
           const systemMsg = (payload.messages || []).find((m) => m.role === 'system')?.content || ''
           requests[requests.length - 1].hasEditPrompt = systemMsg.includes('mz-edit')
 
+          const isDraftCall = mode === 'newchapter' && !requests[requests.length - 1].hasEditPrompt
           let text = ''
-          if (mode === 'apply') {
+          if (isDraftCall) {
+            // 写稿那一次：吐一段够长的正文（约 2600 字），免得长度守护反复补写把用例拖长
+            requests[requests.length - 1].kind = 'draft'
+            const para =
+              '灰线在图纸上从东墙角一直拉到配电房，笔迹很淡，像是有人用左手画的。陈默蹲下去，指尖顺着那条线走，水泥地面上有一层细灰，蹭一下就露出底下的划痕。\n\n'
+            text = (para + '线到头，是一个被水泥盖住的接线盒。' + para).repeat(9)
+          } else if (mode === 'newchapter') {
+            requests[requests.length - 1].kind = 'edit'
+            const ops = {
+              edits: [
+                {
+                  op: 'create_chapter',
+                  title: '第4章 灰线',
+                  summary: '陈默在灰线上看见自己的名字',
+                  draft: true
+                }
+              ]
+            }
+            text = `这一章该建出去了，大纲和章我一起补上：\n\n\`\`\`mz-edit\n${JSON.stringify(ops)}\n\`\`\`\n`
+          } else if (mode === 'apply') {
             const ops = {
               edits: [
                 { op: 'replace_paragraph', chapter: '第 1 章', anchor: ANCHOR, after: REWRITE },
@@ -172,7 +192,7 @@ function driveJs(mode) {
   out.applyLabel = applyBtn ? applyBtn.textContent.trim() : null
   out.applyDisabled = applyBtn ? applyBtn.disabled : null
 
-  if (${mode === 'apply' ? 'true' : 'false'} && applyBtn && !applyBtn.disabled) {
+  if (${mode === 'apply' || mode === 'newchapter' ? 'true' : 'false'} && applyBtn && !applyBtn.disabled) {
     applyBtn.click()
     await sleep(1200)
     const after = window.__MZ.state().project
@@ -185,6 +205,35 @@ function driveJs(mode) {
     out.summaryAfter = ch1After.summary
     out.versionsAfter = (ch1After.versions || []).length
     out.appliedAt2 = last2?.editsAppliedAt || null
+
+    if (${mode === 'newchapter' ? 'true' : 'false'}) {
+      // 建章 + 写稿：等新章出现且有正文（最多 60 秒）
+      const t0 = Date.now()
+      let fresh = null
+      while (Date.now() - t0 < 60000) {
+        const pj = window.__MZ.state().project
+        fresh = pj.chapters.find((c) => (c.title || '').includes('灰线'))
+        if (fresh && (fresh.content || '').length > 0) break
+        await sleep(400)
+      }
+      const fin = window.__MZ.state().project
+      out.chapterTitles = fin.chapters.map((c) => c.title)
+      out.outlineChildren = (fin.outline[0]?.children || []).length
+      out.outlineHasNode = (fin.outline[0]?.children || []).some((n) => (n.title || '').includes('灰线'))
+      out.freshId = fresh?.id || null
+      out.freshTitle = fresh?.title || null
+      out.freshWords = fresh?.words || 0
+      out.freshVersions = (fresh?.versions || []).length
+      out.freshLinked = Boolean(fresh?.outlineNodeId)
+      out.activeId = window.__MZ.state().activeChapterId
+      out.banner = document.body.innerText.includes('写作中') || (last2?.editsAppliedAt || 0) > 0
+      // 关键：作者看到的是编辑器里的字。数据里有正文而编辑器是空的，等于这功能不能用。
+      const pmsNc = Array.from(document.querySelectorAll('.ProseMirror'))
+      out.editorLen = (pmsNc[0]?.innerText || '').length
+      const lastNc = window.__MZ.state().project.chat.filter((m) => m.role === 'assistant').at(-1)
+      out.draftWords = lastNc?.draftWords || 0
+      await sleep(600)
+    }
     out.body = document.body.innerText.slice(0, 1200)
   } else {
     out.contentUnchanged = window.__MZ.state().project.chapters[0].content === snapshot.content
@@ -311,6 +360,26 @@ async function main() {
   check('可以应用（不是 0 处）', w.result.applyDisabled === false, `applyDisabled=${w.result.applyDisabled}`)
   check('这一轮不动稿子（只在预览里确认）', w.result.contentUnchanged === true)
   check('没有任何章被改动', (w.result.versionsAfter || 0) === (w.result.snapshot?.versions || 0))
+
+  /* ── D. 建章 + 写稿 ── */
+  console.log('\nD. 对话建章并当场写稿（newchapter）')
+  const nc = await runCase('newchapter')
+  if (process.env.E2E_DEBUG) console.log('  stderr:', (nc.stderr || '').slice(-2000))
+  console.log(`  截图：${path.relative(ROOT, nc.screenshot)}`)
+  console.log(`  请求：${(nc.requests || []).map((r) => r.kind || '-').join(' → ') || '（无）'}`)
+  check('两次模型调用（对话 + 写稿）', (nc.requests || []).length >= 2, `实际 ${(nc.requests || []).length}`)
+  check('第一次是对话、第二次是写稿', nc.requests[0]?.kind === 'edit' && nc.requests[1]?.kind === 'draft', (nc.requests || []).map((r) => r.kind).join(','))
+  check('预览里出现「新增章节」', /新增章节/.test(nc.result.modalText || ''), (nc.result.modalText || '').slice(0, 160))
+  check('预览里同时给出大纲节点', /新增大纲节点/.test(nc.result.modalText || ''), (nc.result.modalText || '').slice(0, 160))
+  check('应用后书里多了一章', (nc.result.chapterTitles || []).length === 4, JSON.stringify(nc.result.chapterTitles))
+  check('新章标题是第4章 灰线', nc.result.freshTitle === '第4章 灰线', String(nc.result.freshTitle))
+  check('大纲里多了对应节点', nc.result.outlineHasNode === true, `children=${nc.result.outlineChildren}`)
+  check('新章挂到了大纲节点上', nc.result.freshLinked === true)
+  check('写稿写出了正文', (nc.result.freshWords || 0) > 0, `words=${nc.result.freshWords}`)
+  check('新章留了版本快照', (nc.result.freshVersions || 0) >= 1, String(nc.result.freshVersions))
+  check('界面切到了新章', nc.result.activeId === nc.result.freshId, `${nc.result.activeId} vs ${nc.result.freshId}`)
+  check('编辑器里真的显示了新章正文', (nc.result.editorLen || 0) > 200, `editorLen=${nc.result.editorLen}`)
+  check('气泡标了「已写入 N 字」', (nc.result.draftWords || 0) > 0, `draftWords=${nc.result.draftWords}`)
 
   /* ── C. 格式坏了 ── */
   console.log('\nC. 改稿块 JSON 坏了（要说人话）')

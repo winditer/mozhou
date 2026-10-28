@@ -41,7 +41,7 @@ export function AIPanel({
    * 章节 id 不能从改动里拿（建章是 applyEditBatch 里现生成的），所以按标题回查——
    * 标题在定位层已经去过重，回查是准的。
    */
-  const startDrafts = async (kept: ResolvedEdit[]): Promise<void> => {
+  const startDrafts = async (kept: ResolvedEdit[], msgId?: string): Promise<void> => {
     const st = useApp.getState()
     const project0 = st.project
     if (!project0) return
@@ -67,6 +67,7 @@ export function AIPanel({
       toast('没有配置起草模型，章建好了但没写稿。去设置里选一个模型，再说「写第 N 章」即可。', 'error')
       return
     }
+    const wordsBefore = new Map(project0.chapters.map((c) => [c.id, c.words || 0]))
     stopDraftRef.current = false
     setDrafting({
       chapterId: jobs[0].chapterId,
@@ -97,7 +98,11 @@ export function AIPanel({
           onThought: a.onThought
         }),
       getProject: () => useApp.getState().project,
-      patch: (id, patch) => useApp.getState().patchChapter(id, patch),
+      // 写稿是把正文从外面塞进 store：不 bump externalEditRev，编辑器就还显示建章时的空稿
+      patch: (id, patch) => {
+        useApp.getState().patchChapter(id, patch)
+        useApp.getState().markExternalEdit()
+      },
       focus: (id) => useApp.getState().setActiveChapter(id),
       onProgress: (p) => setDrafting(p),
       onStage: (stage) => setDrafting((d) => (d ? { ...d, title: stage } : d)),
@@ -105,6 +110,17 @@ export function AIPanel({
       flushMs: 500
     })
     setDrafting(null)
+    const fin = useApp.getState().project
+    const written = jobs.reduce((sum, j) => {
+      const w = fin?.chapters.find((c) => c.id === j.chapterId)?.words || 0
+      return sum + Math.max(0, w - (wordsBefore.get(j.chapterId) ?? 0))
+    }, 0)
+    if (written > 0 && msgId) {
+      useApp.getState().patchProject((p) => ({
+        ...p,
+        chat: p.chat.map((m) => (m.id === msgId ? { ...m, draftWords: written } : m))
+      }))
+    }
     if (res.stopped) toast('写稿已停止，已写的部分留在正文里；说「继续写这一章」可以接着写。', 'error')
     else if (res.failed && !res.ok) toast('写稿失败，章建好了但正文是空的。说「写第 N 章」可以重试。', 'error')
     else if (res.ok) toast(`写完了 ${res.ok} 章初稿，可在章节版本历史里回退。`, 'ok')
@@ -359,6 +375,7 @@ export function AIPanel({
                       m.editsAppliedAt ? (
                         <div className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--ok)' }}>
                           <Check size={11} /> 这批修改已应用
+                          {m.draftWords ? <span style={{ color: 'var(--text-dim)' }}>· 已写入 {m.draftWords} 字</span> : null}
                         </div>
                       ) : (
                         <button
@@ -467,7 +484,7 @@ export function AIPanel({
           setPreview(null)
           setNow(Date.now())
           toast(`已应用 ${kept.length} 处修改，正文可在章节版本历史里回退。`, 'ok')
-          void startDrafts(kept)
+          void startDrafts(kept, msgId)
         }}
       />
     </div>
