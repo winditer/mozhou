@@ -334,6 +334,86 @@ console.log('新增大纲节点')
   check('父节点不存在 → not-found', badParent.status === 'not-found', badParent.status)
 }
 
+/* ── 7c. 新建章节 ── */
+console.log('新建章节')
+{
+  const p = makeProject()
+  const edits = resolveEdits(p, [{ op: 'create_chapter', title: '第4章 灰线', summary: '陈默在灰线上看见名字', draft: true }])
+  check('展开成两条', edits.length === 2, `实际 ${edits.length}`)
+  const outlineRow = edits.find((e) => e.op.op === 'add_outline_node')
+  const chapterRow = edits.find((e) => e.op.op === 'create_chapter')
+  check('一条是大纲节点', Boolean(outlineRow), JSON.stringify(edits.map((e) => e.op.op)))
+  check('一条是章节', Boolean(chapterRow))
+  check('两条都能应用', edits.every((e) => e.status === 'found'), JSON.stringify(edits.map((e) => e.status)))
+  check(
+    '章节行带写稿目标',
+    chapterRow?.draftTarget?.title === '第4章 灰线' && chapterRow?.draftTarget?.targetWords === 2500,
+    JSON.stringify(chapterRow?.draftTarget)
+  )
+
+  const n = applyResolved(p, edits)
+  check('章节多了一章', n.chapters.length === 4, String(n.chapters.length))
+  check('大纲多了一节', n.outline[0].children.length === 2, String(n.outline[0].children.length))
+  const fresh = n.chapters[3]
+  check('新章标题正确', fresh?.title === '第4章 灰线', String(fresh?.title))
+  check(
+    '新章是待写、0 字',
+    fresh?.status === 'planning' && fresh?.words === 0 && fresh?.content === '',
+    JSON.stringify({ s: fresh?.status, w: fresh?.words })
+  )
+  check(
+    '新章挂到了新节点',
+    fresh?.outlineNodeId === n.outline[0].children[1]?.id,
+    `${fresh?.outlineNodeId} vs ${n.outline[0].children[1]?.id}`
+  )
+  check('梗概写进章和大纲', fresh?.summary === '陈默在灰线上看见名字' && n.outline[0].children[1]?.summary === '陈默在灰线上看见名字')
+  check('原项目没被就地改', p.chapters.length === 3)
+
+  const [dup] = resolveEdits(p, [{ op: 'create_chapter', title: '第2章 老槐树' }])
+  check('重名 → not-found（只报一条）', dup.status === 'not-found', dup.status)
+  check('并说明重名', Boolean(dup.note?.includes('已经有')), dup.note)
+
+  const after = resolveEdits(p, [{ op: 'create_chapter', title: '插叙', after: '第1章' }])
+  const nn = applyResolved(p, after)
+  check('after 决定插入位置', nn.chapters[1]?.title === '插叙', JSON.stringify(nn.chapters.map((c) => c.title)))
+  check('后面的章顺序后移', nn.chapters[2]?.title === '第2章 老槐树')
+  check('标题编号不被重排', nn.chapters[3]?.title === '第3章 她把最后一封信烧了')
+}
+
+/* ── 7d. 给已有章写稿 ── */
+console.log('给已有章写稿')
+{
+  const p = makeProject()
+  const [e] = resolveEdits(p, [{ op: 'write_chapter', chapter: '第1章' }])
+  check('定位到第 1 章', e.status === 'found' && e.chapterId === 'c1', `${e.status} ${e.chapterId}`)
+  check('已有正文 → 接着写', e.writeTarget?.continueOnly === true, JSON.stringify(e.writeTarget))
+  check('标签说「接着写」', e.label.includes('接着写'), e.label)
+
+  const empty = makeProject()
+  empty.chapters[0].content = ''
+  const [e2] = resolveEdits(empty, [{ op: 'write_chapter', chapter: '第1章' }])
+  check('空章 → 写初稿', e2.writeTarget?.continueOnly === false && e2.label.includes('写初稿'), e2.label)
+
+  const [miss] = resolveEdits(p, [{ op: 'write_chapter', chapter: '第99章' }])
+  check('章不存在 → not-found', miss.status === 'not-found', miss.status)
+}
+
+/* ── 7e. 一轮最多 2 章写稿 ── */
+console.log('写稿限额')
+{
+  const p = makeProject()
+  const edits = resolveEdits(p, [
+    { op: 'create_chapter', title: '第4章 A', draft: true },
+    { op: 'create_chapter', title: '第5章 B', draft: true },
+    { op: 'create_chapter', title: '第6章 C', draft: true }
+  ])
+  const withDraft = edits.filter((e) => e.draftTarget)
+  check('只保留前两章写稿', withDraft.length === 2, String(withDraft.length))
+  check('第三条降级为只建章', edits.some((e) => e.op.op === 'create_chapter' && e.op.title === '第6章 C' && !e.draftTarget))
+  const downgraded = edits.find((e) => e.op.op === 'create_chapter' && e.op.title === '第6章 C')
+  check('降级那条说明了原因', Boolean(downgraded?.note?.includes('下一轮')), downgraded?.note)
+}
+
 /* ── 8. 设定库 ── */
 console.log('设定库')
 {

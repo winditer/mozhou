@@ -11,7 +11,7 @@
  * 而纯函数能在 node 里跑几百个用例，不用起 Electron。
  */
 import type { Chapter, OutlineNode, Project } from '@shared/types'
-import { uid } from '@shared/utils'
+import { uid, outlineTitleKey } from '@shared/utils'
 import {
   BIBLE_SCHEMA,
   resolveChapterRef,
@@ -22,6 +22,13 @@ import {
 import { paragraphMatches, splitParagraphs, textToParagraph } from './paragraphs'
 
 export type EditStatus = 'found' | 'ambiguous' | 'not-found'
+
+/**
+ * 一轮最多给几章写稿。
+ * 写一章是一次完整生成（默认 2500 字、带自动补写），两三章连着跑会让作者以为卡死；
+ * 超出的那条降级成「只建章」，让他下一轮再说。
+ */
+const MAX_ROUND_DRAFTS = 2
 
 export interface ResolvedEdit {
   op: EditOp
@@ -50,6 +57,12 @@ export interface ResolvedEdit {
   /** 设定改动：集合与识别名，apply 时用来回写 */
   collection?: BibleCollection
   entryName?: string
+  /** create_chapter 建完之后要不要写稿：有值就是写，targetWords 用于预算 */
+  draftTarget?: { title: string; targetWords: number }
+  /** write_chapter 的目标：已有正文的章按差额接着写 */
+  writeTarget?: { chapterId: string; targetWords: number; continueOnly: boolean }
+  /** create_chapter 建章所需的一切 */
+  chapterCreate?: { title: string; summary: string; targetWords: number; afterIndex?: number; parentId?: string }
   /** 新增大纲节点时带过去的数据 */
   outlineNode?: { parentId?: string; title: string; summary: string; status: OutlineNode['status'] }
   /** 设定改动的字段名 */
@@ -101,15 +114,17 @@ function findAcrossChapters(project: Project, anchor: string, excludeId: string)
  * not-found 红字说明「第 3 章里没找到这句话」——作者一句话就能补正，猜反而是灾难。
  */
 export function resolveEdits(project: Project, ops: EditOp[]): ResolvedEdit[] {
+  // 一轮最多 2 章写稿：一次点应用就长跑十分钟，是这一功能最容易失控的地方
+  const budget = { draftLeft: MAX_ROUND_DRAFTS }
   // 一条 op 可能展成多条改动（全书替换会命中很多段、设定改动会改很多字段），
   // 所以这里 flatMap，界面上一行一条，作者才能逐条否决
   return ops.flatMap((op) => {
-    const r = resolveOne(project, op)
+    const r = resolveOne(project, op, budget)
     return Array.isArray(r) ? r : [r]
   })
 }
 
-function resolveOne(project: Project, op: EditOp): ResolvedEdit | ResolvedEdit[] {
+function resolveOne(project: Project, op: EditOp, budget: { draftLeft: number }): ResolvedEdit | ResolvedEdit[] {
   switch (op.op) {
     case 'replace_paragraph':
     case 'insert_paragraph':
@@ -409,18 +424,135 @@ function resolveOne(project: Project, op: EditOp): ResolvedEdit | ResolvedEdit[]
       }
     }
 
-    // 协议先落地、定位与应用留到下一步：这里显式拒绝，别让作者的改动悄悄消失
-    case 'create_chapter':
-    case 'write_chapter':
+    case 'create_chapter': {
+      const title = (op.title ?? '').trim()
+      const key = outlineTitleKey(title)
+      const clashChapter = project.chapters.find((c) => outlineTitleKey(c.title) === key)
+      const clashNode = flattenOutlineTitles(project.outline).find((t) => outlineTitleKey(t.title) === key)
+      if (clashChapter || clashNode) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'new-entry',
+          label: `新建章节「${title}」`,
+          before: '',
+          after: '',
+          note: clashChapter
+            ? `书里已经有「${clashChapter.title}」这一章了，要改它请用 set_chapter_summary / replace_paragraph`
+            : `大纲里已经有「${clashNode?.title}」这个节点了，要建章请换个标题，或先让作者在大纲页处理`
+        }
+      }
+      const parentRef = op.parent ? resolveOutlineNode(project.outline, op.parent) : null
+      if (op.parent && !parentRef?.node) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'new-entry',
+          label: `新建章节「${title}」`,
+          before: '',
+          after: '',
+          note: `大纲里没有「${op.parent}」这个节点，请换用卷标题或省略 parent`
+        }
+      }
+      let afterIndex: number | undefined
+      if (op.after) {
+        const ref = resolveChapterRef(project, op.after)
+        if (!ref.chapterId) {
+          return {
+            op,
+            status: 'not-found',
+            display: 'new-entry',
+            label: `新建章节「${title}」`,
+            before: '',
+            after: '',
+            note: `找不到要插在后面的章节「${op.after}」`
+          }
+        }
+        afterIndex = project.chapters.findIndex((c) => c.id === ref.chapterId)
+      }
+      const targetWords = op.targetWords ?? Math.max(300, Math.round(project.settings?.targetWordsPerChapter || 2500))
+      const parent = parentRef?.node
+      const outlineRow: ResolvedEdit = {
+        op: { op: 'add_outline_node', parent: op.parent, title, summary: op.summary ?? '', status: 'planned' },
+        status: 'found',
+        display: 'new-entry',
+        label: `新增大纲节点「${title}」`,
+        before: '',
+        after: [title, op.summary ?? '', OUTLINE_STATUS_LABEL.planned].filter(Boolean).join('　'),
+        outlineNode: { parentId: parent?.id, title, summary: op.summary ?? '', status: 'planned' },
+        note: parent ? `挂在 ${parentRef?.path.join(' › ')}` : '挂在最后一卷'
+      }
+      // 限额：前两章写稿，其余只建章
+      const wantsDraft = op.draft === true
+      const allowDraft = wantsDraft && budget.draftLeft > 0
+      if (allowDraft) budget.draftLeft -= 1
+      const chapterRow: ResolvedEdit = {
+        op,
+        status: 'found',
+        display: 'new-entry',
+        label: `新增章节「${title}」`,
+        before: '',
+        after: [
+          `目标 ${targetWords} 字`,
+          op.after ? `插在「${op.after}」之后` : '加在书尾',
+          allowDraft ? '应用后开始写初稿' : ''
+        ]
+          .filter(Boolean)
+          .join('　'),
+        chapterCreate: { title, summary: op.summary ?? '', targetWords, afterIndex, parentId: parent?.id },
+        draftTarget: allowDraft ? { title, targetWords } : undefined,
+        note:
+          wantsDraft && !allowDraft
+            ? '这一轮先建章，写稿下一轮再说（一次最多 2 章）'
+            : op.after
+              ? '只改顺序，不重排后面章节的标题编号'
+              : undefined
+      }
+      return [outlineRow, chapterRow]
+    }
+
+    case 'write_chapter': {
+      const ref = resolveChapterRef(project, op.chapter ?? '')
+      if (!ref.chapterId) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'new-entry',
+          label: `为「${op.chapter ?? ''}」写稿`,
+          before: '',
+          after: '',
+          note: ref.candidates.length
+            ? `这本书里有 ${ref.candidates.length} 章对得上：${ref.candidates.map((c) => c.title).join('、')}`
+            : '书里找不到这一章'
+        }
+      }
+      const chapter = project.chapters.find((c) => c.id === ref.chapterId) as Chapter
+      if (budget.draftLeft <= 0) {
+        return {
+          op,
+          status: 'not-found',
+          display: 'new-entry',
+          label: `为「${chapter.title}」写稿`,
+          before: '',
+          after: '',
+          note: '这一轮已经排了 2 章写稿了，下一轮再写这一章'
+        }
+      }
+      const hasText = chapter.content.replace(/<[^>]+>/g, '').trim().length > 0
+      const targetWords = Math.max(300, Math.round(chapter.targetWords || 2500))
+      budget.draftLeft -= 1
       return {
         op,
-        status: 'not-found',
+        status: 'found',
         display: 'new-entry',
-        label: op.op === 'create_chapter' ? `新建章节「${op.title ?? ''}」` : `为「${op.chapter ?? ''}」写稿`,
+        label: `为「${chapter.title}」${hasText ? '接着写' : '写初稿'}`,
+        chapterId: chapter.id,
+        chapterTitle: chapter.title,
         before: '',
-        after: '',
-        note: '当前版本还不会执行这个操作'
+        after: `约 ${targetWords} 字`,
+        writeTarget: { chapterId: chapter.id, targetWords, continueOnly: hasText }
       }
+    }
 
     case 'bible_upsert': {
       const collection = op.collection as BibleCollection
@@ -700,6 +832,31 @@ export function applyResolved(project: Project, edits: ResolvedEdit[]): Project 
   for (const e of usable) {
     if (e.op.op !== 'add_outline_node' || !e.outlineNode) continue
     next = { ...next, outline: appendOutlineNode(next.outline, e.outlineNode) }
+  }
+
+  // 新建章节：大纲先加完再建章，才能把 outlineNodeId 直接指到**本次新建**的节点上，
+  // 而不是回头靠标题兜底匹配（那会在同名时挂错）
+  for (const e of usable) {
+    if (e.op.op !== 'create_chapter' || !e.chapterCreate) continue
+    const info = e.chapterCreate
+    const node = flattenOutlineTitles(next.outline).find((t) => outlineTitleKey(t.title) === outlineTitleKey(info.title))
+    const chapter: Chapter = {
+      id: uid('c'),
+      title: info.title,
+      content: '',
+      summary: info.summary,
+      status: 'planning',
+      targetWords: info.targetWords,
+      words: 0,
+      outlineNodeId: node?.id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      versions: []
+    }
+    const chapters = [...next.chapters]
+    const at = info.afterIndex === undefined ? chapters.length : Math.min(info.afterIndex + 1, chapters.length)
+    chapters.splice(at, 0, chapter)
+    next = { ...next, chapters }
   }
 
   // 设定库
