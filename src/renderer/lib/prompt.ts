@@ -191,6 +191,22 @@ export interface ContextOptions {
   skillLibrary?: SkillLibrary | null
 }
 
+/**
+ * 当前章节正文一次最多给多少字。
+ *
+ * 这一块是对话改稿唯一的「真本」：模型要靠它逐字抄 anchor。
+ * 旧实现截到 8000 且静默，作者那章 10894 字时，结尾整段模型根本没看到，
+ * 却照样为结尾提改动——anchor 必然对不上。所以一是给得多些，
+ * 二是截了必须写明白，让模型知道自己没看到哪部分。
+ */
+export const CURRENT_CHAPTER_MAX = 14000
+
+export function clipCurrentChapter(body: string): string {
+  if (body.length <= CURRENT_CHAPTER_MAX) return body
+  const omitted = body.length - CURRENT_CHAPTER_MAX
+  return `${body.slice(0, CURRENT_CHAPTER_MAX)}\n\n（这里省略了本章后面的 ${omitted} 字，你没有看到这部分内容；不要为省略部分提任何段落改动，也不要假装读过它。）`
+}
+
 export function assembleContext(
   project: Project,
   chapter: Chapter | null,
@@ -289,7 +305,7 @@ export function assembleContext(
   if (opts.includeCurrent && chapter) {
     const body = stripHtml(chapter.content).trim()
     if (body) {
-      push('current', `当前章节〈${chapter.title || '未命名'}〉正文`, truncate(body, 8000), true)
+      push('current', `当前章节〈${chapter.title || '未命名'}〉正文`, clipCurrentChapter(body), true)
     }
   }
 

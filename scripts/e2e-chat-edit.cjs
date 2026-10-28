@@ -75,6 +75,22 @@ function startMock(mode, requests) {
               ]
             }
             text = `这一章该建出去了，大纲和章我一起补上：\n\n\`\`\`mz-edit\n${JSON.stringify(ops)}\n\`\`\`\n`
+          } else if (mode === 'stale') {
+            // 复刻真实翻车：AI 拿「自己上文里写过的那一版」当正文，anchor 全书都找不到
+            const lastUser = (payload.messages || []).filter((m) => m.role === 'user').at(-1)?.content || ''
+            const retrying = lastUser.includes('重新摘录')
+            requests[requests.length - 1].kind = retrying ? 'edit-retry' : 'edit'
+            const ops = retrying
+              ? { edits: [{ op: 'replace_paragraph', chapter: '第 1 章', anchor: ANCHOR, after: REWRITE }] }
+              : {
+                  edits: [
+                    { op: 'replace_paragraph', chapter: '第 1 章', anchor: '这句正文里根本没有。', after: '改后的第一句。' },
+                    { op: 'replace_paragraph', chapter: '第 1 章', anchor: '这句也从来没出现过。', after: '改后的第二句。' }
+                  ]
+                }
+            text = retrying
+              ? `重新摘了一遍，这回引的是书里的原文：\n\n\`\`\`mz-edit\n${JSON.stringify(ops)}\n\`\`\`\n`
+              : `我按我记得的版本改了这两处：\n\n\`\`\`mz-edit\n${JSON.stringify(ops)}\n\`\`\`\n`
           } else if (mode === 'apply') {
             const ops = {
               edits: [
@@ -191,6 +207,47 @@ function driveJs(mode) {
   const applyBtn = btn(/^应用选中/)
   out.applyLabel = applyBtn ? applyBtn.textContent.trim() : null
   out.applyDisabled = applyBtn ? applyBtn.disabled : null
+
+  if (${mode === 'stale' ? 'true' : 'false'}) {
+    const retryBtn = btn(/让它重新读这一章再改/)
+    out.hasRetry = Boolean(retryBtn)
+    out.retryLabel = retryBtn ? retryBtn.textContent.trim() : null
+    if (retryBtn) {
+      retryBtn.click()
+      await sleep(800)
+      const t0 = Date.now()
+      while (Date.now() - t0 < 60000) {
+        await sleep(300)
+        if (btn(/^发送$/)) break
+      }
+      await sleep(800)
+      const chatNow = window.__MZ.state().project.chat
+      const lastNew = chatNow.filter((m) => m.role === 'assistant').at(-1)
+      out.round2Edits = (lastNew?.edits || []).length
+      // 取最后一个：第一条气泡上的按钮还在（那批没应用），它会先被 querySelector 选中
+      const open2 = Array.from(document.querySelectorAll('button')).filter((b) => /查看并应用/.test(b.textContent.trim())).at(-1)
+      out.hasOpen2 = Boolean(open2)
+      if (open2) {
+        open2.click()
+        await sleep(800)
+        out.modalText2 = (document.querySelector('[role="dialog"]')?.innerText || '').slice(0, 800)
+        const ap2 = btn(/^应用选中/)
+        out.applyLabel2 = ap2 ? ap2.textContent.trim() : null
+        if (ap2 && !ap2.disabled) {
+          ap2.click()
+          await sleep(1400)
+          const after2 = window.__MZ.state().project
+          const ch1b = after2.chapters.find((c) => c.id === 'ch_1')
+          out.changed = ch1b.content !== snapshot.content
+          out.contentAfter = ch1b.content
+          const pms2 = Array.from(document.querySelectorAll('.ProseMirror'))
+          out.editorText = (pms2[0]?.innerText || '').slice(0, 800)
+        }
+      }
+    }
+    out.body = document.body.innerText.slice(0, 1200)
+    return out
+  }
 
   if (${mode === 'apply' || mode === 'newchapter' ? 'true' : 'false'} && applyBtn && !applyBtn.disabled) {
     applyBtn.click()
@@ -360,6 +417,23 @@ async function main() {
   check('可以应用（不是 0 处）', w.result.applyDisabled === false, `applyDisabled=${w.result.applyDisabled}`)
   check('这一轮不动稿子（只在预览里确认）', w.result.contentUnchanged === true)
   check('没有任何章被改动', (w.result.versionsAfter || 0) === (w.result.snapshot?.versions || 0))
+
+  /* ── E. AI 拿错版本 → 一键让它重读 ── */
+  console.log('\nE. anchor 全都对不上时，能一键让它重读这一章（stale）')
+  const st = await runCase('stale')
+  if (process.env.E2E_DEBUG) console.log('  stderr:', (st.stderr || '').slice(-1500))
+  console.log(`  截图：${path.relative(ROOT, st.screenshot)}`)
+  check('第一轮解析出 2 处', st.result.edits === 2, `实际 ${st.result.edits}`)
+  check('应用按钮是禁用的', st.result.applyDisabled === true, `applyDisabled=${st.result.applyDisabled}`)
+  check('预览说清「全都对不上」', /全都对不上/.test(st.result.modalText || ''), (st.result.modalText || '').slice(0, 160))
+  check('预览提到「它自己在对话里写过的那一版」', /写过的那一版/.test(st.result.modalText || ''), (st.result.modalText || '').slice(0, 200))
+  check('有「让它重新读这一章再改」按钮', st.result.hasRetry === true, String(st.result.retryLabel))
+  check('重问真的发出去了', (st.requests || []).length >= 2, `实际 ${(st.requests || []).length}`)
+  check('第二轮是重新摘录', st.requests[1]?.kind === 'edit-retry', String(st.requests[1]?.kind))
+  check('第二轮提出 1 处', st.result.round2Edits === 1, `实际 ${st.result.round2Edits}`)
+  check('第二轮能应用', /应用选中 1 处/.test(st.result.applyLabel2 || ''), String(st.result.applyLabel2))
+  check('正文真的改了', st.result.changed === true && String(st.result.contentAfter || '').includes('那天的风'), String(st.result.contentAfter || '').slice(0, 80))
+  check('编辑器里也换了字', String(st.result.editorText || '').includes('那天的风'), String(st.result.editorText || '').slice(0, 80))
 
   /* ── D. 建章 + 写稿 ── */
   console.log('\nD. 对话建章并当场写稿（newchapter）')

@@ -275,6 +275,8 @@ console.log('提示词')
     ].every((k) => p.includes(k))
   )
   check('提到 anchor 要逐字', p.includes('逐字'))
+  check('说清对话里写过的正文不算数', p.includes('你自己在对话里写过的正文') || p.includes('你写过的正文不等于'), p.slice(900, 1400))
+  check('说清正文被省略时不要改那部分', p.includes('省略'))
   check('提到上限', p.includes(String(MAX_EDITS)))
   check('说明了什么时候不用输出', p.includes('不要输出'))
 }

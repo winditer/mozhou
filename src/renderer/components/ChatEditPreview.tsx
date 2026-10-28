@@ -18,12 +18,15 @@ export function ChatEditPreview({
   open,
   edits,
   onClose,
-  onApply
+  onApply,
+  onRetry
 }: {
   open: boolean
   edits: ResolvedEdit[]
   onClose: () => void
   onApply: (kept: ResolvedEdit[]) => void
+  /** 一批改动全都对不上时，让 AI 拿着真正文重新摘录一次 */
+  onRetry?: () => void
 }): ReactNode {
   // 作者可以逐条否决：取消勾选的条目保持原样。
   // 键用数组下标——同一条 op 可能展成多行（全书替换、设定多字段），
@@ -103,8 +106,24 @@ export function ChatEditPreview({
               color: 'var(--text-dim)'
             }}
           >
-            有 {blocked} 处没法定下来（找不到原文、或同样的话出现了好几处），这些不会改动任何东西。
-            可以让 AI 重新摘录，或在对话里指明是哪一章哪一段。
+            {applicable.length === 0 ? (
+              <>
+                这 {blocked} 处全都对不上你书里的正文——最常见的原因是 AI 用了**它自己在对话里写过的那一版**
+                （那一版可能没被采用，或你后来另写了一版），而书里是另一版。这些改动不会动任何东西。
+              </>
+            ) : (
+              <>
+                有 {blocked} 处没法定下来（找不到原文、或同样的话出现了好几处），这些不会改动任何东西。
+                可以让 AI 重新摘录，或在对话里指明是哪一章哪一段。
+              </>
+            )}
+            {applicable.length === 0 && onRetry && (
+              <div className="mt-2">
+                <Button size="sm" onClick={onRetry}>
+                  让它重新读这一章再改
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

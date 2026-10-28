@@ -1,7 +1,7 @@
 {
   "name": "mozhou",
   "productName": "墨舟",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "墨舟 Mozhou — 本地优先的全场景 AI 写作工坊",
   "main": "./out/main/index.js",
   "author": "Mozhou",
@@ -41,7 +41,8 @@
     "test:ai-flavor-rewrite": "node scripts/test-ai-flavor-rewrite.mjs",
     "test:edit-protocol": "node scripts/test-edit-protocol.mjs",
     "test:apply-edits": "node scripts/test-apply-edits.mjs",
-    "test:draft-jobs": "node scripts/test-draft-jobs.mjs"
+    "test:draft-jobs": "node scripts/test-draft-jobs.mjs",
+    "test:prompt-current": "node scripts/test-prompt-current-chapter.mjs"
   },
   "dependencies": {
     "@tiptap/extension-character-count": "^3.32.0",

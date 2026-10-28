@@ -14,6 +14,15 @@ import { runDraftJobs, type DraftJob, type DraftProgress } from '../lib/draftJob
 import { SkillsPicker } from './SkillsPicker'
 import { Check, Eye, EyeOff, MessageSquare, Send, Sparkles, Square, Trash2, Undo2, Wand2 } from 'lucide-react'
 
+/**
+ * 「让它重新读这一章再改」用的那句话。
+ *
+ * 为什么要在提问里再说一遍：模型最信的是它自己上文里那段完整正文，
+ * 光靠 system 里的规则压不住。这里把它拽回【作品资料】的当前章节正文。
+ */
+const EDIT_RETRY_PROMPT =
+  '重新摘录一遍改动：你上一批的 anchor 全都对不上书里的正文，多半是用上了你在对话里写过的那一版。请只从【作品资料】里的「当前章节正文」逐字复制 anchor（不要从你自己的上文里抄），对不上的地方直接说明，不要编。'
+
 export function AIPanel({
   project,
   chapter,
@@ -485,6 +494,11 @@ export function AIPanel({
           setNow(Date.now())
           toast(`已应用 ${kept.length} 处修改，正文可在章节版本历史里回退。`, 'ok')
           void startDrafts(kept, msgId)
+        }}
+        onRetry={() => {
+          setPreview(null)
+          // 这句话会作为一条普通的提问发出去：作者看得到它说了什么，也看得到下一批改动从哪来
+          void send(EDIT_RETRY_PROMPT)
         }}
       />
     </div>
