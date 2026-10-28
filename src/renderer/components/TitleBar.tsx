@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useApp } from '../store/app'
-import { Check, CircleDot, Feather, Loader2, Minus, PanelRight, Settings as SettingsIcon, Square, X } from 'lucide-react'
+import { BookOpen, Check, CircleDot, Feather, Loader2, Minus, PanelRight, Settings as SettingsIcon, Square, X } from 'lucide-react'
 import { IconButton } from './ui'
 
 export function TitleBar(): ReactNode {
@@ -20,6 +20,21 @@ export function TitleBar(): ReactNode {
           <Feather size={15} style={{ color: 'var(--accent)' }} />
           墨舟
         </button>
+        {/*
+          以前只有 logo 能回书架，用户以为那只是个图标；第一次打开又被引导进设置页，
+          配完模型就找不到作品列表了。给一个写着「书架」的按钮，回退路径才看得见。
+        */}
+        {view !== 'bookshelf' && (
+          <button
+            onClick={() => setView('bookshelf')}
+            className="flex items-center gap-1 h-7 px-2 rounded-md text-[12px] surface-hover"
+            style={{ color: 'var(--text-dim)' }}
+            title="返回书架（作品列表）"
+          >
+            <BookOpen size={13} />
+            书架
+          </button>
+        )}
         {isWorkspace && project && (
           <>
             <span style={{ color: 'var(--text-faint)' }}>/</span>

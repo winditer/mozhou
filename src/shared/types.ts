@@ -391,6 +391,15 @@ export interface ChatRequest {
   messages: PromptMessage[]
   temperature?: number
   maxTokens?: number
+  /**
+   * 让模型跳过思考（推理）过程。
+   *
+   * 'off' 只对支持该开关的渠道实际生效（目前是 DeepSeek 官方及其兼容网关），
+   * 其他渠道会忽略——把不认识的字段发给 OpenAI / Anthropic 这类网关会直接 400。
+   * 用途：体检、抽取这类「结构化 JSON 输出」的任务不需要深推理，思考 token
+   * 反而会把 maxTokens 吃光，导致正文空着结束（见 thoughtStarved）。
+   */
+  thinking?: 'off'
   task: TaskKind
 }
 

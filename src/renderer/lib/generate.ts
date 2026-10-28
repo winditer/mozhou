@@ -2,6 +2,7 @@ import type { Channel, Chapter, Project, TaskKind } from '@shared/types'
 import {
   BUDGET_KEYS,
   DEFAULT_TOKEN_BUDGETS,
+  MAX_OUTPUT_TOKENS,
   budgetHeadroom,
   resolveBudget,
   type BudgetKey,
@@ -447,8 +448,8 @@ export async function generateSummary(
  * 而不是拿同一份预算再问一遍（那只会再空一次）。
  */
 const CHAT_RETRY_FLOOR = 8192
-/** 重试额度的上限，和预算表 clampBudget 的上限保持一致 */
-const CHAT_RETRY_CEIL = 32768
+/** 重试额度的上限，直接取预算表 clampBudget 的上限，避免两处各写一个数 */
+const CHAT_RETRY_CEIL = MAX_OUTPUT_TOKENS
 
 export interface ChatReply {
   text: string

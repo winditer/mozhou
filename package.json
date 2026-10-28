@@ -42,7 +42,9 @@
     "test:edit-protocol": "node scripts/test-edit-protocol.mjs",
     "test:apply-edits": "node scripts/test-apply-edits.mjs",
     "test:draft-jobs": "node scripts/test-draft-jobs.mjs",
-    "test:prompt-current": "node scripts/test-prompt-current-chapter.mjs"
+    "test:prompt-current": "node scripts/test-prompt-current-chapter.mjs",
+    "test:thinking": "node scripts/test-thinking-switch.cjs",
+    "test:channel-commit": "node scripts/test-channel-commit.mjs"
   },
   "dependencies": {
     "@tiptap/extension-character-count": "^3.32.0",

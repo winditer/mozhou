@@ -3,6 +3,7 @@ import { AlertTriangle, RotateCcw } from 'lucide-react'
 import {
   BUDGET_KEYS,
   DEFAULT_TOKEN_BUDGETS,
+  MAX_OUTPUT_TOKENS,
   clampBudget,
   type BudgetKey,
   type PerWordBudget,
@@ -433,7 +434,7 @@ function FixedInput({
       <Input
         type="number"
         min={1}
-        max={32768}
+        max={MAX_OUTPUT_TOKENS}
         step={100}
         value={String(value)}
         onChange={(e) => onWrite(numOr(e.target.value, value))}
@@ -509,8 +510,8 @@ function PerWordInputs({
       <div className="flex items-end gap-2">
         {field('每字倍数', 'perWord', { step: 0.1, min: 0.5, max: 8 })}
         {field('思考余量', 'thinkPad', { step: 64, min: 0, max: 16384 })}
-        {field('下限', 'min', { step: 100, min: 1, max: 32768 })}
-        {field('上限', 'max', { step: 500, min: 1, max: 32768 })}
+        {field('下限', 'min', { step: 100, min: 1, max: MAX_OUTPUT_TOKENS })}
+        {field('上限', 'max', { step: 500, min: 1, max: MAX_OUTPUT_TOKENS })}
       </div>
       {inverted && (
         <span className="text-[10.5px]" style={{ color: 'var(--warn)' }}>

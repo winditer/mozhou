@@ -25,6 +25,11 @@ const outfile = join(outdir, 'mergeSettings.mjs')
 await build({ entryPoints: [entry], bundle: true, format: 'esm', outfile, logLevel: 'silent' })
 const { DEFAULT_SETTINGS, mergeSettings } = await import(pathToFileURL(outfile).href)
 
+// 上限从实现里读，别在测试里另抄一个数字——上限调整时这里必须跟着变，抄一份就会悄悄过期
+const budgetsOut = join(outdir, 'budgets.mjs')
+await build({ entryPoints: [join(here, '../src/shared/budgets.ts')], bundle: true, format: 'esm', outfile: budgetsOut, logLevel: 'silent' })
+const { MAX_OUTPUT_TOKENS } = await import(pathToFileURL(budgetsOut).href)
+
 let pass = 0
 let fail = 0
 function check(name, cond, extra) {
@@ -172,12 +177,12 @@ console.log('结构坏的条目回落默认')
 }
 
 /* ── 5. 结构对、数值越界：夹取，不回默认 ──
-   用户的 999999 是「填错了」，改成上限 32768 他还能看出被改过；
+   用户的 999999 是「填错了」，改成上限（MAX_OUTPUT_TOKENS）他还能看出被改过；
    悄悄换成默认的 2600，他会以为自己的设置根本没生效。 */
 console.log('越界只夹取，不换默认值')
 {
   const s = mergeSettings({ tokenBudgets: { 'audit.book': { kind: 'fixed', tokens: 999999 } } })
-  check('999999 → 夹到 32768', budgetOf(s, 'audit.book')?.tokens === 32768, JSON.stringify(budgetOf(s, 'audit.book')))
+  check('999999 → 夹到上限', budgetOf(s, 'audit.book')?.tokens === MAX_OUTPUT_TOKENS, JSON.stringify(budgetOf(s, 'audit.book')))
   check('没被换成默认值', budgetOf(s, 'audit.book')?.tokens !== AUDIT_BOOK, JSON.stringify(budgetOf(s, 'audit.book')))
 
   const zero = mergeSettings({ tokenBudgets: { 'audit.book': { kind: 'fixed', tokens: 0 } } })

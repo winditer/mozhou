@@ -45,6 +45,18 @@ export type BudgetKey =
   | 'quickstart.volumes'
   | 'quickstart.chapters'
 
+/**
+ * 单次请求输出额度的硬上限（也是设置页输入框的 max）。
+ *
+ * 为什么是 131072 而不是更高：DeepSeek V4 系列（deepseek-flash / deepseek-v4-pro）
+ * 的 max_tokens 上限是 393216，但官方默认思考档位就是 64K，reasoning_effort=max 才到 128K。
+ * 写作类调用单章最多几万字，128K 足够覆盖体检、整卷摘要这些最大项；再高只会让误设的
+ * 数值把一次请求的等待时间与费用顶穿（一次 384K 输出按 flash 非高峰价也要 $0.2+，
+ * 生成还要几分钟）。上限只管「单次能填多高」，与模型上下文长度无关；
+ * 存量配置里更大的值会在加载/保存时被夹回这个数。
+ */
+export const MAX_OUTPUT_TOKENS = 131072
+
 /** 固定预算：无论写多少字都给这么多输出额度。用于摘要、审计这类长度自洽的任务。 */
 export interface FixedBudget {
   kind: 'fixed'
@@ -169,17 +181,17 @@ function clampInt(value: number | undefined, lo: number, hi: number, fallback = 
  * 把一份预算校验成合法值，配置脏了也不许抛错。
  *
  * 规则：
- * - fixed.tokens → [1, 32768]，取整；非有限数按 1
+ * - fixed.tokens → [1, MAX_OUTPUT_TOKENS]，取整；非有限数按 1
  * - perWord.perWord → [0.5, 8]（太小的倍数会让正文根本写不完，太大纯属浪费）
  * - perWord.thinkPad → [0, 16384]，取整
- * - perWord.min / max → [1, 32768]，取整，并保证 min <= max（用户填反了就换过来）
+ * - perWord.min / max → [1, MAX_OUTPUT_TOKENS]，取整，并保证 min <= max（用户填反了就换过来）
  *
  * 永远返回新对象，字段顺序固定为 kind 打头，设置页表单按这个顺序排。
  */
 export function clampBudget(budget: TokenBudget): TokenBudget {
   if (budget?.kind === 'perWord') {
-    const min = clampInt(budget.min, 1, 32768)
-    const max = clampInt(budget.max, 1, 32768)
+    const min = clampInt(budget.min, 1, MAX_OUTPUT_TOKENS)
+    const max = clampInt(budget.max, 1, MAX_OUTPUT_TOKENS)
     return {
       kind: 'perWord',
       /** 倍率不取整 */
@@ -191,7 +203,7 @@ export function clampBudget(budget: TokenBudget): TokenBudget {
   }
   // kind 不是 perWord 的（含 undefined / 被用户存坏的数据）一律当固定预算处理
   const tokens = budget?.kind === 'fixed' || budget === undefined ? budget?.tokens : undefined
-  return { kind: 'fixed', tokens: clampInt(tokens, 1, 32768, 1) }
+  return { kind: 'fixed', tokens: clampInt(tokens, 1, MAX_OUTPUT_TOKENS, 1) }
 }
 
 /**

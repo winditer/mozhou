@@ -21,7 +21,7 @@ const entry = join(here, '../src/shared/budgets.ts')
 const outdir = mkdtempSync(join(tmpdir(), 'mozhou-budget-test-'))
 const outfile = join(outdir, 'budgets.mjs')
 await build({ entryPoints: [entry], bundle: true, format: 'esm', outfile, logLevel: 'silent' })
-const { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, resolveBudget, clampBudget } = await import(
+const { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, MAX_OUTPUT_TOKENS, resolveBudget, clampBudget } = await import(
   pathToFileURL(outfile).href
 )
 
@@ -113,7 +113,11 @@ console.log('clampBudget 校验')
   const c = clampBudget({ kind: 'fixed', tokens: 0 })
   check('tokens 0 → 1', c.kind === 'fixed' && c.tokens === 1, JSON.stringify(c))
   check('tokens 负数 → 1', clampBudget({ kind: 'fixed', tokens: -800 }).tokens === 1)
-  check('tokens 999999 → 32768', clampBudget({ kind: 'fixed', tokens: 999999 }).tokens === 32768)
+  check('tokens 999999 → MAX_OUTPUT_TOKENS', clampBudget({ kind: 'fixed', tokens: 999999 }).tokens === MAX_OUTPUT_TOKENS)
+  // 老用户之前顶格填的 32768 必须照旧有效（上调上限不能顺手把存量值夹掉）
+  check('tokens 32768 仍然合法', clampBudget({ kind: 'fixed', tokens: 32768 }).tokens === 32768)
+  check('tokens 65536 合法（新档位）', clampBudget({ kind: 'fixed', tokens: 65536 }).tokens === 65536)
+  check('tokens MAX+1 被夹回 MAX', clampBudget({ kind: 'fixed', tokens: MAX_OUTPUT_TOKENS + 1 }).tokens === MAX_OUTPUT_TOKENS)
   check('tokens 小数取整', clampBudget({ kind: 'fixed', tokens: 600.4 }).tokens === 600)
   check('tokens NaN → 1', clampBudget({ kind: 'fixed', tokens: Number.NaN }).tokens === 1)
   check('tokens 缺失 → 1', clampBudget({ kind: 'fixed' }).tokens === 1)
@@ -133,7 +137,7 @@ console.log('clampBudget 校验')
   check('倒置 min/max 会被换回来', inverted.min === 3000 && inverted.max === 12000, JSON.stringify(inverted))
   check('倒置后 min <= max', inverted.min <= inverted.max)
   const both = clampBudget({ kind: 'perWord', perWord: 2.2, thinkPad: 1024, min: 99999, max: 99999 })
-  check('上下限都超范围仍 min <= max', both.min <= both.max && both.max <= 32768, JSON.stringify(both))
+  check('上下限都超范围仍 min <= max', both.min <= both.max && both.max <= MAX_OUTPUT_TOKENS, JSON.stringify(both))
 
   // 必须是新对象，不能改到传入的那一份（设置页会拿旧值做 diff）
   const src = { kind: 'fixed', tokens: 600 }
@@ -158,7 +162,7 @@ console.log('clampBudget 校验')
 console.log('resolveBudget 对脏预算也纠偏')
 {
   check('固定预算 0 不走 0', resolveBudget({ 'chat.reply': { kind: 'fixed', tokens: 0 } }, 'chat.reply') === 1)
-  // 用户把 min 填成 99999、max 填成 100：先各自夹到 [1,32768]，再排序成 [100, 32768]，
+  // 用户把 min 填成 99999、max 填成 100：先各自夹到 [1,MAX_OUTPUT_TOKENS]，再排序成 [100, MAX_OUTPUT_TOKENS]，
   // 于是 300 字算出的 1684 落在区间内，原样返回——参数被修好了，结果也是合法的。
   check(
     '按字数预算参数合法化后再算',
@@ -291,7 +295,7 @@ console.log('结构坏的条目回落默认')
     resolveBudget({ 'draft.generate': { kind: 'perWord', perWord: 3, thinkPad: 500, min: 100, max: 9000 } }, 'draft.generate', 1000) === 3500,
     resolveBudget({ 'draft.generate': { kind: 'perWord', perWord: 3, thinkPad: 500, min: 100, max: 9000 } }, 'draft.generate', 1000)
   )
-  check('结构合法但数值越界仍走夹取，不回默认', resolveBudget({ 'audit.book': { kind: 'fixed', tokens: 999999 } }, 'audit.book') === 32768)
+  check('结构合法但数值越界仍走夹取，不回默认', resolveBudget({ 'audit.book': { kind: 'fixed', tokens: 999999 } }, 'audit.book') === MAX_OUTPUT_TOKENS)
 }
 
 console.log(`\n${pass} 通过 / ${fail} 失败`)

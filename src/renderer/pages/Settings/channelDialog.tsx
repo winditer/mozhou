@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ExternalLink } from 'lucide-react'
 import type { Channel, ModelEntry, Protocol } from '@shared/types'
 import { PROTOCOL_LABELS, PROVIDER_PRESETS } from '@shared/providers'
@@ -6,19 +6,31 @@ import { uid } from '@shared/utils'
 import { mz } from '../../lib/bridge'
 import { Button, Field, Input, Modal, Select, Spinner, Switch, Textarea } from '../../components/ui'
 import { useApp } from '../../store/app'
+import { ChannelModels } from './channelModels'
 import { commitConfig, errMsg, MONO } from './common'
+import { commitChannelAndModels } from './channelCommit'
 
 /* ───────────────────────── 渠道编辑弹窗 ───────────────────────── */
 
+/**
+ * 新增 / 编辑渠道。渠道本身和它的模型列表在同一个弹窗里配完，点「保存」一次性落盘。
+ *
+ * 为什么模型要搬进来：模型是渠道的从属物，分开放会让人配完 Key 就走，
+ * 结果渠道有了、模型为空，生成时又报「没有可用模型」。
+ * 这里的模型增删改全是内存态（staged），取消即丢弃——不会在配置里留下半成品。
+ */
 export function ChannelDialog({
   open,
   channel,
+  models,
   hasKey,
   onClose,
   onSaved
 }: {
   open: boolean
   channel: Channel | null
+  /** 该渠道当前的模型（新增时为 []） */
+  models: ModelEntry[]
   /** 该渠道是否已保存 Key（false = 未配置） */
   hasKey: boolean
   onClose: () => void
@@ -33,7 +45,9 @@ export function ChannelDialog({
   const [headersText, setHeadersText] = useState('')
   const [enabled, setEnabled] = useState(true)
   const [presetId, setPresetId] = useState('custom')
-  const [presetModels, setPresetModels] = useState<string[]>([])
+  const [stagedModels, setStagedModels] = useState<ModelEntry[]>([])
+  /** 新建渠道时先定下 id：模型要挂 channelId，保存前不能是空串 */
+  const [draftId, setDraftId] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -47,26 +61,49 @@ export function ChannelDialog({
     setHeadersText(channel?.headers && Object.keys(channel.headers).length > 0 ? JSON.stringify(channel.headers, null, 2) : '')
     setEnabled(channel?.enabled ?? true)
     setPresetId(channel?.presetId ?? 'custom')
-    setPresetModels([])
+    setStagedModels(models.map((m) => ({ ...m })))
+    setDraftId(channel?.id ?? uid('ch'))
     setError('')
     setBusy(false)
+    // models 只在打开的那一刻取快照；保存后由父组件重新传入
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, channel])
 
   const preset = PROVIDER_PRESETS.find((p) => p.id === presetId)
   const keyHint = preset?.keyHint && preset.keyHint !== '留空即可' ? preset.keyHint : '粘贴你的 API Key'
+  const targetId = channel?.id ?? draftId
+
+  /** 表单值拼出的渠道对象：给「拉取模型」用，也保证保存前后字段口径一致 */
+  const draftChannel = useMemo(
+    (): Channel => ({
+      id: targetId,
+      name: name.trim() || '未命名渠道',
+      protocol,
+      baseUrl: baseUrl.trim().replace(/\/+$/, ''),
+      enabled,
+      presetId
+    }),
+    [targetId, name, protocol, baseUrl, enabled, presetId]
+  )
 
   function applyPreset(id: string): void {
     setPresetId(id)
     const p = PROVIDER_PRESETS.find((x) => x.id === id)
     if (!p || p.id === 'custom') {
-      setPresetModels([])
+      setError('')
       return
     }
     // 预设负责把名称 / 协议 / 地址 / 常用模型一次性填好，用户仍可逐项改
     setName(p.name)
     setProtocol(p.protocol)
     setBaseUrl(p.baseUrl)
-    setPresetModels(p.models)
+    setStagedModels((list) => {
+      const have = new Set(list.map((m) => m.model))
+      const additions = p.models
+        .filter((m) => !have.has(m))
+        .map((m): ModelEntry => ({ id: uid('m'), channelId: targetId, model: m, label: m, enabled: true }))
+      return [...list, ...additions]
+    })
     setError('')
   }
 
@@ -106,7 +143,7 @@ export function ChannelDialog({
       headers = Object.keys(out).length > 0 ? out : undefined
     }
 
-    const id = channel?.id ?? uid('ch')
+    const id = targetId
     const next: Channel = {
       id,
       name: name.trim(),
@@ -116,20 +153,13 @@ export function ChannelDialog({
       enabled,
       presetId
     }
+    const nextModels = stagedModels.map((m) => ({ ...m, channelId: id }))
 
     setBusy(true)
     setError('')
     try {
-      const ok = await commitConfig((c) => {
-        const exists = c.channels.some((x) => x.id === id)
-        const channels = exists ? c.channels.map((x) => (x.id === id ? next : x)) : [...c.channels, next]
-        // 预设自带的常用模型：保存时并入模型表（按 model 字段去重）
-        const have = new Set(c.models.filter((m) => m.channelId === id).map((m) => m.model))
-        const additions = presetModels
-          .filter((m) => !have.has(m))
-          .map((m): ModelEntry => ({ id: uid('m'), channelId: id, model: m, label: m, enabled: true }))
-        return { ...c, channels, models: additions.length > 0 ? [...c.models, ...additions] : c.models }
-      })
+      // 渠道与它的整套模型一次提交（纯函数，见 channelCommit.ts）
+      const ok = await commitConfig((c) => commitChannelAndModels(c, next, nextModels))
       if (!ok) return
 
       // Key 留空 = 不修改；只有填写了才写入系统钥匙串
@@ -145,6 +175,7 @@ export function ChannelDialog({
       }
       onSaved(next, keyWritten)
       if (!key && !hasKey) toast('渠道已保存。别忘了填入 API Key 才能使用', 'info')
+      else if (nextModels.length === 0) toast('渠道已保存，但还没有可用模型；可以再点「编辑」补上', 'info')
       else toast(channel ? '渠道已更新' : '渠道已添加', 'ok')
       onClose()
     } catch (e) {
@@ -159,11 +190,13 @@ export function ChannelDialog({
       open={open}
       onClose={onClose}
       title={channel ? `编辑渠道 · ${channel.name}` : '新增渠道'}
-      width={680}
+      width={720}
       footer={
         <>
-          <Button onClick={onClose}>取消</Button>
-          <Button variant="primary" onClick={() => void handleSave()} disabled={busy}>
+          <Button onClick={onClose} type="button">
+            取消
+          </Button>
+          <Button variant="primary" onClick={() => void handleSave()} disabled={busy} type="button">
             {busy ? <Spinner size={12} /> : null} 保存
           </Button>
         </>
@@ -235,12 +268,11 @@ export function ChannelDialog({
               <Button
                 size="sm"
                 variant="ghost"
+                type="button"
                 onClick={() => {
                   const url = preset.keyUrl
                   if (!url) return
-                  void mz.app
-                    .openExternal(url)
-                    .catch((e: unknown) => toast(`打开链接失败：${errMsg(e)}`, 'error'))
+                  void mz.app.openExternal(url).catch((e: unknown) => toast(`打开链接失败：${errMsg(e)}`, 'error'))
                 }}
               >
                 去申请 Key <ExternalLink size={12} />
@@ -250,13 +282,23 @@ export function ChannelDialog({
         </Field>
 
         <Field
+          hint={
+            hasKey || apiKey.trim()
+              ? '可以直接填模型 ID，也可以从接口拉取。停用的模型不会出现在任务分配里。'
+              : '配好 Key 后可以点「从接口拉取」自动获取模型；也可以手填一个模型 ID。'
+          }
+        >
+          <ChannelModels channel={draftChannel} models={stagedModels} apiKey={apiKey} onChange={setStagedModels} />
+        </Field>
+
+        <Field
           label="额外请求头（可选）"
           hint='JSON 对象，例如 {"HTTP-Referer": "https://myapp.com", "X-Title": "墨舟"}；留空即不发送额外头。'
         >
           <Textarea
             value={headersText}
             onChange={(e) => setHeadersText(e.target.value)}
-            rows={3}
+            rows={2}
             placeholder='{"HTTP-Referer": "https://myapp.com"}'
             spellCheck={false}
             style={{ fontFamily: MONO, fontSize: 12 }}
@@ -267,12 +309,6 @@ export function ChannelDialog({
           <div className="text-[12.5px]">启用该渠道</div>
           <Switch checked={enabled} onChange={setEnabled} />
         </div>
-
-        {presetModels.length > 0 && (
-          <div className="text-[11.5px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
-            保存后会带入预设模型：{presetModels.join('、')}
-          </div>
-        )}
 
         {error && (
           <div

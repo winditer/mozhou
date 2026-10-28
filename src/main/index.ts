@@ -27,7 +27,10 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#f7f8fa',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 20 } : undefined,
+    // 标题栏高 42px（.titlebar），右侧图标按钮 30px、垂直居中 → 中线在 21px。
+    // 系统红绿灯直径 12px，要落在同一条中线上，顶部就得是 21 - 12/2 = 15。
+    // 以前写 20，灯心在 26，比右边那排按钮低 5px，看起来像没对齐。
+    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 15 } : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

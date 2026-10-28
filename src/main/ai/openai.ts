@@ -17,6 +17,8 @@ export interface StreamAdapterArgs {
   messages: PromptMessage[]
   temperature?: number
   maxTokens?: number
+  /** 'off' = 跳过思考；只对支持该开关的渠道（DeepSeek 系）实际生效 */
+  thinking?: 'off'
   signal: AbortSignal
   onDelta: (d: string) => void
   /** 思考/推理增量（reasoning_content 等），不计入正文 */
@@ -155,6 +157,16 @@ function parsePlainBody(raw: string): PlainBody {
   }
 }
 
+/**
+ * 只有 DeepSeek 官方接口（及其兼容网关）认 `thinking` 开关。
+ * 别的家对这个字段一律按未知参数处理：温和的忽略，严格的直接 400，
+ * 所以「关思考」不能对所有渠道盲发，只能按 baseUrl / 预设判断后发。
+ */
+function supportsThinkingSwitch(channel: Channel): boolean {
+  if (channel.presetId === 'deepseek') return true
+  return /deepseek/i.test(channel.baseUrl)
+}
+
 export async function streamOpenAI(args: StreamAdapterArgs): Promise<{ promptTokens: number; completionTokens: number; finishReason?: string }> {
   const { channel, apiKey, model, messages, temperature, maxTokens, signal, onDelta, onThought, onActivity, onAbnormalEnd } = args
   const takeStream = args.onStream ?? ((s: StreamHandle): StreamHandle => s)
@@ -167,10 +179,17 @@ export async function streamOpenAI(args: StreamAdapterArgs): Promise<{ promptTok
     ...(channel.headers ?? {}) // 渠道自定义头（如 OpenRouter 的 HTTP-Referer）可覆盖默认值
   }
 
+  /**
+   * 关思考是「尽量发」而不是「必须发」：网关不认就摘掉重试（见下面的 400 分支），
+   * 不能因为优化项没生效就让整个请求失败。
+   */
+  let withThinking = args.thinking === 'off' && supportsThinkingSwitch(channel)
+
   const buildBody = (withStreamOptions: boolean, completionTokensField = false): Record<string, unknown> => {
     const body: Record<string, unknown> = { model, messages, stream: true }
     if (withStreamOptions) body.stream_options = { include_usage: true }
     if (typeof temperature === 'number') body.temperature = temperature
+    if (withThinking) body.thinking = { type: 'disabled' }
     if (typeof maxTokens === 'number') {
       // 新一些的服务端只认 max_completion_tokens，旧参数会被判为不支持；
       // 这里先用旧参数，收到 400 再换新参数重试一次。
@@ -196,6 +215,10 @@ export async function streamOpenAI(args: StreamAdapterArgs): Promise<{ promptTok
     // 兼容不支持 stream_options 的服务端：报文里提到该字段就摘掉重试一次
     if (/stream_options/i.test(text)) {
       res = await send(false)
+    } else if (withThinking && /thinking|reasoning/i.test(text)) {
+      // 网关不认识「关思考」开关：摘掉重试，让请求回到改造前的行为
+      withThinking = false
+      res = await send(true)
     } else if (typeof maxTokens === 'number' && /max_tokens|max_completion_tokens/i.test(text)) {
       // 参数名不被接受：换 max_completion_tokens 再试
       res = await send(true, true)

@@ -418,6 +418,9 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
         messages: buildBookAuditMessages(live, summaries),
         task: 'audit',
         temperature: 0.2,
+        // 体检输出是固定结构的 JSON，不需要深推理；不关思考的话 reasoning 会先吃掉
+        // 大半个 maxTokens，最后 JSON 只写一半甚至正文为空（thoughtStarved）
+        thinking: 'off',
         maxTokens: resolveBudget(budgets, BUDGET_KEYS.auditBook),
         onDelta: sink.onDelta,
         onThought: sink.onThought
@@ -504,6 +507,7 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
         messages: buildChapterAuditMessages(live, chapter),
         task: 'audit',
         temperature: 0.25,
+        thinking: 'off',
         maxTokens: resolveBudget(budgets, BUDGET_KEYS.auditChapter),
         onDelta: sink.onDelta,
         onThought: sink.onThought
@@ -570,6 +574,7 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
         messages: buildThreadHuntMessages(live, summaryMap(live)),
         task: 'audit',
         temperature: 0.35,
+        thinking: 'off',
         maxTokens: resolveBudget(budgets, BUDGET_KEYS.auditThread),
         onDelta: sink.onDelta,
         onThought: sink.onThought

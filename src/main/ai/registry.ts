@@ -49,6 +49,8 @@ interface RunArgs {
   messages: PromptMessage[]
   temperature?: number
   maxTokens?: number
+  /** 'off' = 跳过思考；适配器只在渠道支持该开关时才真的发出去 */
+  thinking?: 'off'
   signal: AbortSignal
   onDelta: (delta: string) => void
   /** 思考/推理增量：不是正文，只用来告诉界面「模型在动」 */
@@ -242,6 +244,7 @@ export async function streamChat(
       messages: req.messages,
       temperature: req.temperature,
       maxTokens: req.maxTokens,
+      thinking: req.thinking,
       signal: controller.signal,
       onDelta: handleDelta,
       onThought: handleThought,

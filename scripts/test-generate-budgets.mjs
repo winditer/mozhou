@@ -32,7 +32,7 @@ const entry = join(root, 'src/renderer/lib/generate.ts')
  * [2048, 16000]，里面的**每一个整数**都可能被算出来，4321 恰好在内。
  * 用它做区分值，「透传了」和「回落默认（某种字数下正好算出 4321）」就无法区分。
  * 这里取 19001 > 16000（按字数预算的上限，也是旧公式的上限），
- * 而且不等于任何固定预算；同时 ≤ 32768，保证 clampBudget 不会把它夹掉。
+ * 而且不等于任何固定预算；同时 ≤ MAX_OUTPUT_TOKENS，保证 clampBudget 不会把它夹掉。
  * 下面的第 0 节会把这件事断言一遍，任何一边改了都会立刻报错。
  */
 const DISTINCT = 19001
@@ -109,7 +109,7 @@ await build({
   outfile: budgetsOut,
   logLevel: 'silent'
 })
-const { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS } = await import(pathToFileURL(budgetsOut).href)
+const { BUDGET_KEYS, DEFAULT_TOKEN_BUDGETS, MAX_OUTPUT_TOKENS } = await import(pathToFileURL(budgetsOut).href)
 
 let pass = 0
 let fail = 0
@@ -222,7 +222,7 @@ console.log('前提：区分值与默认值不撞车')
   }
   check(`${DISTINCT} 不在任何默认预算里`, !defaults.has(DISTINCT), `${DISTINCT} 与默认值重合`)
   check(`${DISTINCT_CONTINUE} 不在任何默认预算里`, !defaults.has(DISTINCT_CONTINUE), `${DISTINCT_CONTINUE} 与默认值重合`)
-  check('区分值在 clampBudget 的合法区间内（不会被夹掉）', DISTINCT <= 32768 && DISTINCT_CONTINUE <= 32768)
+  check('区分值在 clampBudget 的合法区间内（不会被夹掉）', DISTINCT <= MAX_OUTPUT_TOKENS && DISTINCT_CONTINUE <= MAX_OUTPUT_TOKENS)
   check('默认表里有 summary.auto', DEFAULT_TOKEN_BUDGETS[BUDGET_KEYS.summaryAuto] !== undefined)
 }
 

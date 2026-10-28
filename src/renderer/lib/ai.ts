@@ -88,6 +88,8 @@ export interface SendOptions {
   task: TaskKind
   temperature?: number
   maxTokens?: number
+  /** 'off' = 结构化任务跳过思考（仅 DeepSeek 渠道实际生效，见 ChatRequest.thinking） */
+  thinking?: 'off'
   onDelta?: (d: string) => void
   /** 思考增量回调（不是正文） */
   onThought?: (d: string) => void
@@ -117,6 +119,7 @@ export async function sendChat(opts: SendOptions): Promise<AIResult> {
     messages: opts.messages,
     temperature: opts.temperature,
     maxTokens: opts.maxTokens,
+    thinking: opts.thinking,
     task: opts.task
   }
   const res = await mz.ai.chat(req)
