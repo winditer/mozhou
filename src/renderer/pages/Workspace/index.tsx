@@ -19,20 +19,26 @@ import { IdeasTab } from './IdeasTab'
 import { StatsTab } from './StatsTab'
 import { StyleTab } from './StyleTab'
 import { AuditTab } from './AuditTab'
+import { RecitalTab } from './recital/RecitalTab'
+import { MarginGutter } from './audit/MarginGutter'
 import { Button, Progress } from '../../components/ui'
-import { BarChart3, Download, FileSearch, Fingerprint, Info, Lightbulb, ListTree, Maximize2, PenLine, Search, Sparkles, Stethoscope, Users, Wand2 } from 'lucide-react'
+import { BarChart3, Download, FileSearch, Fingerprint, Info, Lightbulb, ListTree, Maximize2, MessageSquareQuote, Mic, PenLine, Search, Sparkles, Stethoscope, Users, Wand2 } from 'lucide-react'
 import { ProjectInfoModal } from '../../components/ProjectInfoModal'
 import { generateDraft, generateSelection, generateSummary, textToParagraphHtml } from '../../lib/generate'
 import { DE_AI_INSTRUCTION, summarizeProof } from '../../lib/textcraft'
 import { abortChat } from '../../lib/ai'
 import { mz } from '../../lib/bridge'
 
-const RAIL: { key: 'write' | 'outline' | 'bible' | 'ideas' | 'style' | 'audit' | 'stats'; label: string; icon: ReactNode }[] = [
+/** 旁批(320) + AI 面板(372) 同时开会把正文挤没；不低于这个宽度才允许两个都开 */
+const SIDE_PANELS_MIN_WIDTH = 1500
+
+const RAIL: { key: 'write' | 'outline' | 'bible' | 'ideas' | 'style' | 'recital' | 'audit' | 'stats'; label: string; icon: ReactNode }[] = [
   { key: 'write', label: '写作', icon: <PenLine size={17} /> },
   { key: 'outline', label: '大纲', icon: <ListTree size={17} /> },
   { key: 'bible', label: '设定', icon: <Users size={17} /> },
   { key: 'ideas', label: '灵感', icon: <Lightbulb size={17} /> },
   { key: 'style', label: '文风', icon: <Fingerprint size={17} /> },
+  { key: 'recital', label: '评书', icon: <Mic size={17} /> },
   { key: 'audit', label: '体检', icon: <Stethoscope size={17} /> },
   { key: 'stats', label: '统计', icon: <BarChart3 size={17} /> }
 ]
@@ -53,12 +59,18 @@ export function Workspace(): ReactNode {
   const patchProject = useApp((s) => s.patchProject)
   const flush = useApp((s) => s.flush)
   const toast = useApp((s) => s.toast)
+  const pendingReveal = useApp((s) => s.pendingReveal)
+  const setPendingReveal = useApp((s) => s.setPendingReveal)
 
   const editorRef = useRef<Editor | null>(null)
   const [sel, setSel] = useState<{ text: string; from: number; to: number } | null>(null)
   const [caret, setCaret] = useState<CaretContext | null>(null)
   const [proofOpen, setProofOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  /** 写作页右侧「旁批」栏：与搜索、校读互斥，同一时刻只开一个 */
+  const [marginOpen, setMarginOpen] = useState(false)
+  /** 编辑器实例换代：编辑器在切章后重建，ref 变化不会触发渲染，用一个计数通知跳段 effect */
+  const [editorRev, setEditorRev] = useState(0)
   const [gen, setGen] = useState<GenConfig | null>(null)
   /** 正在查看/编辑梗概的章节 id（null = 弹窗关闭） */
   const [summaryFor, setSummaryFor] = useState<string | null>(null)
@@ -73,6 +85,9 @@ export function Workspace(): ReactNode {
     () => project?.chapters.find((c) => c.id === activeChapterId) ?? null,
     [project, activeChapterId]
   )
+
+  /** 当前章已有多少条侧批：工具栏按钮上直接显示，作者一眼知道有没有可看的 */
+  const marginCount = chapter ? (project?.marginNotes[chapter.id]?.notes.length ?? 0) : 0
 
   const setFocusMode = useCallback(
     async (next: boolean): Promise<void> => {
@@ -120,12 +135,44 @@ export function Workspace(): ReactNode {
     return () => window.removeEventListener('keydown', onKey)
   }, [focusMode, aiPanelOpen, setFocusMode, toggleAiPanel])
 
+  // 窄窗口里旁批和 AI 面板只能留一个：⌘J 唤起 AI 时收起旁批，避免正文被挤成 0 宽
+  useEffect(() => {
+    if (!marginOpen || !aiPanelOpen) return
+    if (window.innerWidth >= SIDE_PANELS_MIN_WIDTH) return
+    setMarginOpen(false)
+    toast('窗口较窄，已收起旁批给正文让位；关掉 AI 面板后可再打开', 'info')
+  }, [aiPanelOpen, marginOpen, toast])
+
   // 菜单「视图 → 沉浸写作」走主进程快捷键，这里接事件
   useEffect(() => mz.app.onToggleFocus(() => void setFocusMode(!useApp.getState().config?.settings.focusMode)), [setFocusMode])
 
   const onEditorReady = useCallback((ed: Editor | null) => {
     editorRef.current = ed
+    setEditorRev((v) => v + 1)
   }, [])
+
+  /**
+   * 旁批 / 体检点「跳到正文」：把光标与选区落到指定段落。
+   *
+   * 段落序号与 `splitParagraphs` 同一口径：正文里的每个 textblock（含标题块）算一段。
+   * 用编辑器节点而不是重新 splitHtml，是为了拿到 ProseMirror 的真实坐标——
+   * 两者在正常稿子里一一对应；对不上时宁可不跳，也不要把选区落到别的段落上。
+   */
+  useEffect(() => {
+    if (!pendingReveal || !editorRef.current) return
+    if (chapter?.id !== pendingReveal.chapterId) return
+    const ed = editorRef.current
+    const ranges: { from: number; to: number }[] = []
+    ed.state.doc.descendants((node, pos) => {
+      if (!node.isTextblock) return true
+      ranges.push({ from: pos + 1, to: pos + node.content.size })
+      return false
+    })
+    const target = ranges[pendingReveal.paragraph - 1]
+    setPendingReveal(null)
+    if (!target) return
+    ed.chain().focus().setTextSelection({ from: target.from, to: target.to }).scrollIntoView().run()
+  }, [pendingReveal, chapter?.id, editorRev, setPendingReveal])
 
   const insertHtml = useCallback(
     (text: string, mode: 'cursor' | 'end' | 'replace') => {
@@ -478,20 +525,23 @@ export function Workspace(): ReactNode {
                 value={chapter?.title ?? ''}
                 onChange={(e) => chapter && patchChapter(chapter.id, { title: e.target.value })}
                 placeholder="章节标题"
-                className="bg-transparent outline-none text-[13.5px] font-medium min-w-0 flex-1"
+                className="bg-transparent outline-none text-[13.5px] font-medium min-w-[120px] flex-1"
                 style={{ color: 'var(--text)' }}
               />
-              <span className="text-[11px] shrink-0" style={{ color: 'var(--text-faint)' }}>
+              <span className="hidden xl:inline text-[11px] shrink-0" style={{ color: 'var(--text-faint)' }}>
                 {scene.name}
                 {genre ? ` · ${genre.name}` : ''}
               </span>
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto overflow-y-hidden scroll-thin">
                 <Button
                   size="sm"
                   variant="ghost"
                   onClick={() => {
                     setSearchOpen(!searchOpen)
-                    if (!searchOpen) setProofOpen(false)
+                    if (!searchOpen) {
+                      setProofOpen(false)
+                      setMarginOpen(false)
+                    }
                   }}
                   title="搜索正文 ⌘F（本章 / 全书）"
                 >
@@ -502,11 +552,34 @@ export function Workspace(): ReactNode {
                   variant="ghost"
                   onClick={() => {
                     setProofOpen(!proofOpen)
-                    if (!proofOpen) setSearchOpen(false)
+                    if (!proofOpen) {
+                      setSearchOpen(false)
+                      setMarginOpen(false)
+                    }
                   }}
                   title="正文校读：标点、空格、重复词"
                 >
                   <FileSearch size={13} /> 校读{proofCount > 0 ? ` ${proofCount}` : ''}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    const next = !marginOpen
+                    setMarginOpen(next)
+                    if (next) {
+                      setSearchOpen(false)
+                      setProofOpen(false)
+                      // 窄窗口放不下旁批 + AI 面板：收起 AI，保住正文宽度
+                      if (aiPanelOpen && window.innerWidth < SIDE_PANELS_MIN_WIDTH) {
+                        toggleAiPanel()
+                        toast('窗口较窄，已收起 AI 面板给旁批腾地方', 'info')
+                      }
+                    }
+                  }}
+                  title="旁批：AI 以编辑视角挂在这一章每段旁边的意见，只批注不改稿"
+                >
+                  <MessageSquareQuote size={13} /> 旁批{marginCount > 0 ? ` ${marginCount}` : ''}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => startSummary()} title="用 AI 生成本章梗概">
                   本章梗概
@@ -612,6 +685,11 @@ export function Workspace(): ReactNode {
             <StyleTab project={project} />
           </div>
         )}
+        {tab === 'recital' && (
+          <div className="flex-1 min-h-0">
+            <RecitalTab project={project} />
+          </div>
+        )}
         {tab === 'audit' && (
           <div className="flex-1 min-h-0">
             <AuditTab project={project} />
@@ -665,6 +743,15 @@ export function Workspace(): ReactNode {
               ed.chain().focus().setTextSelection(found).run()
             }}
           />
+        </div>
+      )}
+
+      {tab === 'write' && marginOpen && !searchOpen && !proofOpen && !focusMode && (
+        <div
+          className="shrink-0 h-full flex flex-col"
+          style={{ width: 320, background: 'var(--sidebar)', borderLeft: '1px solid var(--border)' }}
+        >
+          <MarginGutter project={project} chapter={chapter} onClose={() => setMarginOpen(false)} />
         </div>
       )}
 

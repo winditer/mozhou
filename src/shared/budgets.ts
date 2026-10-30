@@ -44,6 +44,9 @@ export type BudgetKey =
   | 'quickstart.settings'
   | 'quickstart.volumes'
   | 'quickstart.chapters'
+  | 'import.meta'
+  | 'import.chapters'
+  | 'recital.script'
 
 /**
  * 单次请求输出额度的硬上限（也是设置页输入框的 max）。
@@ -112,7 +115,10 @@ export const BUDGET_KEYS = {
   quickstartTitle: 'quickstart.title',
   quickstartSettings: 'quickstart.settings',
   quickstartVolumes: 'quickstart.volumes',
-  quickstartChapters: 'quickstart.chapters'
+  quickstartChapters: 'quickstart.chapters',
+  importMeta: 'import.meta',
+  importChapters: 'import.chapters',
+  recitalScript: 'recital.script'
 } as const satisfies Record<string, BudgetKey>
 
 /**
@@ -163,7 +169,14 @@ export const DEFAULT_TOKEN_BUDGETS: TokenBudgets = {
   'quickstart.title': fixed(1200),
   'quickstart.settings': fixed(6000),
   'quickstart.volumes': fixed(3000),
-  'quickstart.chapters': fixed(6000)
+  'quickstart.chapters': fixed(6000),
+
+  // 导入书稿：元信息是一段 300–600 字梗概 + 几个人物，结构比问答长；
+  // 章节摘要按批返回（一批至多 8 章 × 80 字），给足但不必给到上万。
+  'import.meta': fixed(2200),
+  'import.chapters': fixed(2400),
+  // 评书稿跟正文字数一个量级（1/3/5 分钟分别约 260/780/1300 字），按字数预算走。
+  'recital.script': perWord()
 }
 
 /** 数值兜底：非有限数一律回 fallback，避免 NaN 一路传进请求参数。 */

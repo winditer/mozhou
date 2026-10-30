@@ -120,6 +120,27 @@ const GROUPS: GroupDef[] = [
     ]
   },
   {
+    title: '导入与评书',
+    desc: '导入一本成稿时识别元信息、压缩章摘，以及把一章改写成评书稿，各自用多少额度。',
+    rows: [
+      {
+        key: BUDGET_KEYS.importMeta,
+        label: '导入识别（书名/题材/简介）',
+        desc: '导入书稿时读抽样正文，产出书名、题材、一句话简介、故事梗概与主要人物。'
+      },
+      {
+        key: BUDGET_KEYS.importChapters,
+        label: '导入章节摘要（每批）',
+        desc: '一次把至多 8 章的正文压成 40–80 字摘要；章多的书会调用多次。'
+      },
+      {
+        key: BUDGET_KEYS.recitalScript,
+        label: 'AI 评书稿',
+        desc: '把一章改写成评书体（定场诗、扣子、且听下回分解），按目标时长折算字数。'
+      }
+    ]
+  },
+  {
     title: '摘要与体检',
     desc: '摘要与体检的输出都是结构化 JSON，给不够会解析失败、界面上一片空白。',
     rows: [

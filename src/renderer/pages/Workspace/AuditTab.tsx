@@ -12,7 +12,7 @@ import {
   Sparkles,
   Stethoscope
 } from 'lucide-react'
-import type { Chapter, Project, Thread } from '@shared/types'
+import type { Project, Thread } from '@shared/types'
 import { formatDateTime, stripHtml, truncate, uid } from '@shared/utils'
 import { Button, EmptyState, Progress, Segmented, Select, Spinner } from '../../components/ui'
 import { abortChat, sendChat } from '../../lib/ai'
@@ -1288,18 +1288,9 @@ export function AuditTab({ project }: { project: Project }): ReactNode {
             「审校模型未配置」的提示挡住——没配模型时依然能扫、能看排行。 */}
         {scope === 'aiFlavor' && <AiFlavorPanel project={project} />}
 
-        {scope === 'margin' && (
-          <div className="card overflow-hidden" style={{ height: 560 }}>
-            <MarginNotes
-              project={project}
-              chapter={project.chapters.find((c: Chapter) => c.id === currentChapterId) ?? project.chapters[0] ?? null}
-              resolveModel={() => {
-                const r = resolveTaskModel(config, project, 'audit')
-                return r ? { channel: r.channel, model: r.model, label: r.label } : null
-              }}
-            />
-          </div>
-        )}
+        {/* 段落侧批是批量工作台：范围选择 + 逐章结果，信息量不是一个固定 560px 的框装得下的，
+            所以这里不再包固定高度，整块跟随页面滚动（外观仍是卡片，由组件内部自己排）。 */}
+        {scope === 'margin' && <MarginNotes project={project} />}
 
         {scope === 'thread' && (
           <>

@@ -542,7 +542,13 @@ export async function generateChatReply(
 }
 
 export async function generateCustom(
-  p: GenParams & { system: string; user: string; maxTokens?: number }
+  p: GenParams & {
+    system: string
+    user: string
+    maxTokens?: number
+    /** 'off' = 结构化任务跳过思考，避免 reasoning 把输出额度吃光后正文为空（见 ChatRequest.thinking） */
+    thinking?: 'off'
+  }
 ): Promise<string> {
   const r = await sendChat({
     channel: p.channel,
@@ -554,6 +560,7 @@ export async function generateCustom(
     task: p.task,
     temperature: p.temperature,
     maxTokens: p.maxTokens ?? resolveBudget(p.budgets ?? DEFAULT_TOKEN_BUDGETS, BUDGET_KEYS.customDefault),
+    thinking: p.thinking,
     onDelta: p.onDelta,
     onThought: p.onThought
   })

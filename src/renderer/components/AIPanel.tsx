@@ -257,22 +257,33 @@ export function AIPanel({
 
   return (
     <div className="flex flex-col h-full" style={{ width: 372, background: 'var(--sidebar)', borderLeft: '1px solid var(--border)' }}>
-      <div className="flex items-center gap-2 px-3 h-11 shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
-        <Segmented
-          value={tab}
-          onChange={(v) => setTab(v)}
-          options={[
-            { value: 'chat', label: 'AI 对话' },
-            { value: 'context', label: '上下文' }
-          ]}
-        />
-        <div className="flex-1" />
-        <span className="chip" title={resolved ? `模型：${resolved.model}` : '未配置模型'}>
+      {/* 标题栏只放「切换 + 模型 + 清空」：这三样是常驻的，必须一行放得下。
+          写稿进度另起一条窄带——它带「停止」按钮，塞进来会把 372px 的标题栏挤到换行。 */}
+      <div
+        className="flex items-center gap-2 px-3 h-11 shrink-0 min-w-0 overflow-hidden"
+        style={{ borderBottom: '1px solid var(--border)' }}
+      >
+        <div className="shrink-0">
+          <Segmented
+            value={tab}
+            onChange={(v) => setTab(v)}
+            options={[
+              { value: 'chat', label: 'AI 对话' },
+              { value: 'context', label: '上下文' }
+            ]}
+          />
+        </div>
+        <div className="flex-1 min-w-0" />
+        <span
+          className="chip"
+          style={{ maxWidth: 132, minWidth: 0, flexShrink: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={resolved ? `模型：${resolved.model}` : '未配置模型'}
+        >
           {resolved ? resolved.label : '未配置模型'}
         </span>
         {canUndo && (
           <button
-            className="chip surface-hover"
+            className="chip surface-hover shrink-0 whitespace-nowrap"
             style={{ height: 20, padding: '0 7px', fontSize: 10.5 }}
             title="撤销刚才这批对话改稿（正文回到应用之前的样子）"
             onClick={() => {
@@ -283,36 +294,45 @@ export function AIPanel({
             <Undo2 size={10} /> 撤销改稿
           </button>
         )}
-        {drafting && (
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10.5px] tabular-nums" style={{ color: 'var(--accent)' }} title={drafting.title}>
-              写作中 {drafting.written}/{drafting.target}
-            </span>
-            <button
-              className="chip surface-hover"
-              style={{ height: 20, padding: '0 6px', fontSize: 10.5 }}
-              title="停下这次写稿，已写的部分会留在正文里"
+        {project.chat.length > 0 && tab === 'chat' && (
+          <span className="shrink-0">
+            <IconButton
+              title="清空对话"
               onClick={() => {
-                stopDraftRef.current = true
-                abortChat()
+                patchProject((p) => ({ ...p, chat: [] }))
+                toast('对话已清空', 'ok')
               }}
             >
-              停止
-            </button>
-          </div>
-        )}
-        {project.chat.length > 0 && tab === 'chat' && (
-          <IconButton
-            title="清空对话"
-            onClick={() => {
-              patchProject((p) => ({ ...p, chat: [] }))
-              toast('对话已清空', 'ok')
-            }}
-          >
-            <Trash2 size={14} />
-          </IconButton>
+              <Trash2 size={14} />
+            </IconButton>
+          </span>
         )}
       </div>
+      {drafting && (
+        <div
+          className="flex items-center gap-2 px-3 h-8 shrink-0"
+          style={{ borderBottom: '1px solid var(--border)', background: 'var(--panel-2)' }}
+        >
+          <span
+            className="flex-1 min-w-0 truncate text-[10.5px] tabular-nums"
+            style={{ color: 'var(--accent)' }}
+            title={drafting.title}
+          >
+            写作中 {drafting.written}/{drafting.target}
+          </span>
+          <button
+            className="chip surface-hover shrink-0 whitespace-nowrap"
+            style={{ height: 20, padding: '0 6px', fontSize: 10.5 }}
+            title="停下这次写稿，已写的部分会留在正文里"
+            onClick={() => {
+              stopDraftRef.current = true
+              abortChat()
+            }}
+          >
+            停止
+          </button>
+        </div>
+      )}
 
       {tab === 'chat' ? (
         <>

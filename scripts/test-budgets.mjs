@@ -58,7 +58,9 @@ const FIXED_EXPECT = {
   'quickstart.title': 1200,
   'quickstart.settings': 6000,
   'quickstart.volumes': 3000,
-  'quickstart.chapters': 6000
+  'quickstart.chapters': 6000,
+  'import.meta': 2200,
+  'import.chapters': 2400
 }
 for (const [key, tokens] of Object.entries(FIXED_EXPECT)) {
   const b = DEFAULT_TOKEN_BUDGETS[key]
@@ -79,7 +81,8 @@ const PER_WORD_KEYS = [
   'outline.chapterBrief',
   'bible.entry',
   'bible.entryShort',
-  'quickstart.firstChapter'
+  'quickstart.firstChapter',
+  'recital.script'
 ]
 for (const key of PER_WORD_KEYS) {
   const b = DEFAULT_TOKEN_BUDGETS[key]
@@ -206,8 +209,8 @@ console.log('BUDGET_KEYS 结构')
   const values = Object.values(BUDGET_KEYS ?? {})
   const defaultKeys = Object.keys(DEFAULT_TOKEN_BUDGETS ?? {})
 
-  check('BUDGET_KEYS 正好 24 项', names.length === 24, `实际 ${names.length}`)
-  check('默认表正好 24 个 key', defaultKeys.length === 24, `实际 ${defaultKeys.length}`)
+  check('BUDGET_KEYS 正好 27 项', names.length === 27, `实际 ${names.length}`)
+  check('默认表正好 27 个 key', defaultKeys.length === 27, `实际 ${defaultKeys.length}`)
 
   const dupes = values.filter((v, i) => values.indexOf(v) !== i)
   check('BUDGET_KEYS 无重复值', dupes.length === 0, dupes.join(','))
@@ -229,9 +232,9 @@ console.log('BUDGET_KEYS 结构')
     `BUDGET_KEYS: ${Object.values(BUDGET_KEYS).join('|')}\n默认表: ${Object.keys(DEFAULT_TOKEN_BUDGETS).join('|')}`
   )
   check('预算种类只有两种', defaultKeys.every((k) => ['fixed', 'perWord'].includes(DEFAULT_TOKEN_BUDGETS[k].kind)))
-  check('fixed 16 个 / perWord 8 个',
-    defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length === 16 &&
-      defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'perWord').length === 8,
+  check('fixed 18 个 / perWord 9 个',
+    defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length === 18 &&
+      defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'perWord').length === 9,
     `fixed ${defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length}`
   )
   check('默认预算都是合法值', defaultKeys.every((k) => JSON.stringify(clampBudget(DEFAULT_TOKEN_BUDGETS[k])) === JSON.stringify(DEFAULT_TOKEN_BUDGETS[k])))

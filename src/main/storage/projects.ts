@@ -196,6 +196,10 @@ function normalizeProject(p: Project): Project {
     ideas: pf.ideas ?? [],
     chat: pf.chat ?? [],
     usage: pf.usage ?? [],
-    summaries: pf.summaries ?? {}
+    summaries: pf.summaries ?? {},
+    // 1.7.0 新增：老书里没有这两项，读盘时补空表；不补的话界面上
+    // `project.marginNotes[chapterId]` 会直接对 undefined 取下标崩掉。
+    marginNotes: pf.marginNotes ?? {},
+    recitals: pf.recitals ?? {}
   }
 }

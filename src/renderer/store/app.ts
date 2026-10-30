@@ -33,7 +33,7 @@ function emptyLibrary(): StyleLibrary {
 }
 
 export type ViewName = 'bookshelf' | 'workspace' | 'settings'
-export type WorkspaceTab = 'write' | 'outline' | 'bible' | 'ideas' | 'style' | 'audit' | 'stats'
+export type WorkspaceTab = 'write' | 'outline' | 'bible' | 'ideas' | 'style' | 'recital' | 'audit' | 'stats'
 
 export interface Toast {
   id: string
@@ -88,6 +88,15 @@ interface AppState {
   duplicateProject: (id: string) => Promise<void>
 
   setActiveChapter: (id: string | null) => void
+  /**
+   * 「跳到某章某段」的一次性信号。
+   *
+   * 为什么不用 setTimeout 猜编辑器什么时候就绪：切章会重建编辑器实例，
+   * 固定延时在慢机器上不够、快机器上又白等。这里只留一个待办，Workspace 在
+   * 编辑器就绪后消费并清空——跳转的时序由组件生命周期保证，而不是靠睡眠。
+   */
+  pendingReveal: { chapterId: string; paragraph: number } | null
+  setPendingReveal: (r: { chapterId: string; paragraph: number } | null) => void
   addChapter: (title?: string, atIndex?: number) => Chapter | null
   patchChapter: (id: string, patch: Partial<Chapter>) => void
   /**
@@ -146,6 +155,7 @@ export const useApp = create<AppState>((set, get) => ({
   skillLibrary: null,
   lastEditUndo: null,
   externalEditRev: 0,
+  pendingReveal: null,
 
   async init() {
     const [info, config, projects] = await Promise.all([mz.app.info(), mz.config.get(), mz.project.list()])
@@ -360,6 +370,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   setActiveChapter(id) {
     set({ activeChapterId: id, tab: 'write' })
+  },
+
+  setPendingReveal(r) {
+    set({ pendingReveal: r })
   },
 
   addChapter(title, atIndex) {

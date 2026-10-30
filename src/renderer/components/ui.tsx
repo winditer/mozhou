@@ -169,7 +169,7 @@ export function Segmented<T extends string>({
         <button
           key={o.value}
           onClick={() => onChange(o.value)}
-          className="px-2.5 h-[26px] rounded-md text-[12px] transition-colors"
+          className="px-2.5 h-[26px] rounded-md text-[12px] transition-colors whitespace-nowrap"
           style={{
             background: value === o.value ? 'var(--panel)' : 'transparent',
             color: value === o.value ? 'var(--text)' : 'var(--text-dim)',
@@ -328,5 +328,40 @@ export function Tooltip({ text, children }: { text: string; children: ReactNode 
     <span title={text} className="inline-flex">
       {children}
     </span>
+  )
+}
+
+/**
+ * 原生 checkbox 太丑、第三方组件又没必要，这里包一层。
+ * 保留原生 input 是为了键盘与无障碍：label 包住它，点文字也能勾。
+ */
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  disabled,
+  title
+}: {
+  checked: boolean
+  onChange: (next: boolean) => void
+  label?: ReactNode
+  disabled?: boolean
+  title?: string
+}): ReactNode {
+  return (
+    <label
+      className="inline-flex items-center gap-1.5 text-[12px] select-none"
+      style={{ color: disabled ? 'var(--text-faint)' : 'var(--text-dim)', cursor: disabled ? 'default' : 'pointer' }}
+      title={title}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ width: 13, height: 13, accentColor: 'var(--accent)', margin: 0 }}
+      />
+      {label}
+    </label>
   )
 }

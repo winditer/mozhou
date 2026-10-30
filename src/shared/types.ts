@@ -145,6 +145,53 @@ export interface ScenePreset {
   examples: string[]
 }
 
+/* ───────────────────────── 段落侧批 / 评书 ───────────────────────── */
+
+/** 侧批的六种口吻：删 / 改 / 慢 / 快 / 虚 / 偏。与批注提示词里的枚举一一对应。 */
+export type MarginNoteKind = '删' | '改' | '慢' | '快' | '虚' | '偏'
+
+export interface MarginNote {
+  /** 段落序号，从 1 开始（按 stripHtml 后按空行切分） */
+  paragraph: number
+  kind: MarginNoteKind
+  note: string
+  /** 批注指向的原文片段，模型尽量给；用于跳转与核对 */
+  quote?: string
+  /** 作者标记：已处理（列表默认仍显示，可筛「只看未处理」） */
+  resolved?: boolean
+}
+
+/**
+ * 某一章的侧批结果。
+ *
+ * 为什么要持久化而不是留在组件 state 里：批注是花钱跑出来的编辑意见，
+ * 作者切去改两段再回来，结果就没了——那这个功能等于一次性的玩具。
+ */
+export interface MarginNoteSet {
+  at: number
+  /** 生成这份结果的模型显示名 */
+  model?: string
+  /** 生成时这一章有多少段（正文改短后序号会错位） */
+  paragraphs: number
+  /** 生成时正文指纹（词数 + 首尾片段），用于提示「批注基于旧稿」 */
+  fingerprint: string
+  notes: MarginNote[]
+}
+
+/** 一章的 AI 评书稿。同样按章持久化，关掉应用再打开还能接着听。 */
+export interface Recital {
+  at: number
+  /** 风格 id，见评书面板内的 RECITAL_STYLES */
+  styleId: string
+  /** 回目名（评书稿标题） */
+  title: string
+  /** 评书稿全文（纯文本，空行分段） */
+  script: string
+  model?: string
+  /** 作者手改过：重新生成前要确认是否覆盖 */
+  edited?: boolean
+}
+
 export interface Genre {
   id: string
   name: string
@@ -374,6 +421,10 @@ export interface Project {
   usage: UsageRecord[]
   /** 每章滚动摘要缓存：chapterId -> summary */
   summaries: Record<string, string>
+  /** 段落侧批：chapterId → 批注集（只存有结果的章） */
+  marginNotes: Record<string, MarginNoteSet>
+  /** AI 评书稿：chapterId → 评书稿 */
+  recitals: Record<string, Recital>
 }
 
 /* ────────────────────────────── AI 请求 ────────────────────────────── */

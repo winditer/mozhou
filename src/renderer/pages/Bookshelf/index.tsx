@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { BookOpen, Copy, Ellipsis, Feather, Pencil, Plus, Search, Trash } from 'lucide-react'
+import { BookOpen, Copy, Ellipsis, Feather, FileUp, Pencil, Plus, Search, Trash } from 'lucide-react'
 import type { Project, ProjectMeta } from '@shared/types'
 import { getGenre } from '@shared/genres'
 import { getScene } from '@shared/scenes'
@@ -8,6 +8,7 @@ import { useApp } from '../../store/app'
 import { Button, EmptyState, Input, Modal, Select, Spinner } from '../../components/ui'
 import { ProjectInfoModal } from '../../components/ProjectInfoModal'
 import { mz } from '../../lib/bridge'
+import { ImportBookWizard, type ImportFilePayload } from './ImportBookWizard'
 import { NewBookWizard } from './NewBookWizard'
 import { QuickStart } from './QuickStart'
 
@@ -345,6 +346,8 @@ export function Bookshelf(): ReactNode {
   const [sort, setSort] = useState<SortKey>('updated')
   const [wizardOpen, setWizardOpen] = useState(false)
   const [qsOpen, setQsOpen] = useState(false)
+  const [importFile, setImportFile] = useState<ImportFilePayload | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
   const patchSettings = useApp((s) => s.patchSettings)
   const coverSize = coverSizeOf(useApp((s) => s.config?.settings.shelfCoverSize))
   const [infoProject, setInfoProject] = useState<Project | null>(null)
@@ -413,6 +416,28 @@ export function Bookshelf(): ReactNode {
     await mz.project.save(next)
     await refreshProjects()
     toast('作品信息已更新', 'ok')
+  }
+
+  /**
+   * 导入书稿：先弹系统选文件框，拿到内容后再开向导。
+   * 按钮直接摆在工具条上而不是塞进 ⋯ 菜单：这是第一次使用就要看到的能力。
+   */
+  const handleImport = (): void => {
+    void (async () => {
+      try {
+        const picked = await mz.io.importFile()
+        if (picked?.canceled) return
+        if (!picked?.content) {
+          toast(picked?.message || '没有读取到文件内容', 'error')
+          return
+        }
+        const name = picked.path?.split(/[\\/]/).pop() || '书稿.txt'
+        setImportFile({ name, content: picked.content })
+        setImportOpen(true)
+      } catch (e) {
+        toast(`读取文件失败：${(e as Error).message}`, 'error')
+      }
+    })()
   }
 
   const handleDelete = async (meta: ProjectMeta): Promise<void> => {
@@ -491,6 +516,11 @@ export function Bookshelf(): ReactNode {
             ✨ AI 一键开书
           </Button>
 
+          <Button onClick={handleImport} type="button">
+            <FileUp size={14} />
+            导入书稿
+          </Button>
+
           <Button variant="primary" onClick={() => setWizardOpen(true)} type="button">
             <Plus size={14} />
             新建作品
@@ -558,6 +588,7 @@ export function Bookshelf(): ReactNode {
 
       <NewBookWizard open={wizardOpen} onClose={() => setWizardOpen(false)} />
       <QuickStart open={qsOpen} onClose={() => setQsOpen(false)} />
+      <ImportBookWizard open={importOpen} onClose={() => setImportOpen(false)} file={importFile} />
     </div>
   )
 }

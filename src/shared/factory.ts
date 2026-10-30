@@ -132,7 +132,9 @@ export function createBlankProject(input: NewProjectInput): Project {
     ideas: [],
     chat: [],
     usage: [],
-    summaries: {}
+    summaries: {},
+    marginNotes: {},
+    recitals: {}
   }
 }
 
