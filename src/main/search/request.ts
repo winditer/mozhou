@@ -33,6 +33,15 @@ export function buildSearchRequest(
   const headers = authHeaders(channel, apiKey)
 
   switch (channel.presetId) {
+    case 'deepseek':
+      // 官方 Search API：count 上限 50，按「成功请求」计费，所以 need_content 默认 false
+      // —— 抓正文是另一次 Fetch 调用，会另算钱，而我们只需要摘要。
+      return {
+        url: base,
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ query, count: maxResults, need_content: false })
+      }
     case 'zhipu':
       return {
         url: base,

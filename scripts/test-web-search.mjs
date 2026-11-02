@@ -97,6 +97,67 @@ check('searxng 用 GET', searx.method === 'GET')
 check('searxng 带 format=json', searx.url.includes('format=json'), searx.url)
 check('searxng 查询串已编码', !searx.url.includes('明代'), searx.url)
 
+console.log('DeepSeek 搜索（官方 Search API）')
+const ds = req.buildSearchRequest(
+  { id: 'd', name: 'd', presetId: 'deepseek', baseUrl: 'https://api.deepseek.com/v1/tools/search', auth: 'bearer', enabled: true },
+  'sk-ds',
+  '明代锦衣卫品级',
+  5
+)
+check('deepseek 打到 /v1/tools/search', ds.url === 'https://api.deepseek.com/v1/tools/search', ds.url)
+check('deepseek 用 POST', ds.method === 'POST')
+check('deepseek 带 Bearer', ds.headers.Authorization === 'Bearer sk-ds')
+const dsBody = JSON.parse(ds.body)
+check('deepseek 字段是 query', dsBody.query === '明代锦衣卫品级', JSON.stringify(dsBody))
+check('deepseek 字段是 count', dsBody.count === 5)
+check('deepseek 不抓正文（need_content=false，抓正文另计费）', dsBody.need_content === false, JSON.stringify(dsBody))
+
+const dsJson = {
+  results: [
+    {
+      rerank_score: 2.4,
+      title: '锦衣卫 - 维基百科',
+      url: 'https://zh.wikipedia.org/wiki/jinyiwei',
+      snippet: '短摘要（给界面看）',
+      summary: '长摘要'.repeat(200),
+      content: '',
+      site_name: '维基百科',
+      site_icon: 'https://zh.wikipedia.org/favicon.ico',
+      date: '2026-06-01T00:00:00+00:00',
+      authority: 3
+    },
+    { rerank_score: 0.4, title: '低质', url: 'https://bad.example/x', snippet: 's', summary: '', content: '', site_name: null, date: null }
+  ]
+}
+const dsHits = norm.extractHits('deepseek', dsJson, 5)
+check('deepseek 取到 2 条', dsHits.length === 2, String(dsHits.length))
+check('deepseek 优先用 summary（给模型读的那份）', dsHits[0].snippet.startsWith('长摘要'), dsHits[0].snippet.slice(0, 12))
+check('deepseek 摘要截到 400 字以内', dsHits[0].snippet.length === 400, String(dsHits[0].snippet.length))
+check('deepseek 用 site_name 当来源', dsHits[0].source === '维基百科', dsHits[0].source)
+check('deepseek 日期', dsHits[0].publishedAt === '2026-06-01T00:00:00+00:00', String(dsHits[0].publishedAt))
+check('deepseek 空 summary 回落 snippet', dsHits[1].snippet === 's', dsHits[1].snippet)
+check('deepseek 空 site_name 回落域名', dsHits[1].source === 'bad.example', dsHits[1].source)
+check('deepseek 空结果不抛异常', norm.extractHits('deepseek', { results: [] }, 5).length === 0)
+
+console.log('DeepSeek Key 复用（猜错就是发错 token）')
+const ks = await load('src/main/search/keySource.ts', 'keySource')
+const mkCh = (id, baseUrl, enabled = true) => ({ id, name: id, baseUrl, enabled })
+check('认得官方地址', ks.deepSeekDonor([mkCh('a', 'https://api.deepseek.com/v1')])?.id === 'a')
+check('认得子域', ks.deepSeekDonor([mkCh('a', 'https://beta.api.deepseek.com/v1')])?.id === 'a')
+check('带端口也认得', ks.deepSeekDonor([mkCh('a', 'https://api.deepseek.com:443/v1')])?.id === 'a')
+check('第三方中转不算（key 未必能调官方搜索）', ks.deepSeekDonor([mkCh('a', 'https://api.relay.com/v1')]) === null)
+check('假冒域名不算', ks.deepSeekDonor([mkCh('a', 'https://api.deepseek.com.evil.cn/v1')]) === null)
+check('停用的渠道不出借', ks.deepSeekDonor([mkCh('a', 'https://api.deepseek.com/v1', false)]) === null)
+check('跳过不相关的渠道取第一个 DeepSeek', ks.deepSeekDonor([mkCh('x', 'https://api.relay.com/v1'), mkCh('y', 'https://api.deepseek.com/v1')])?.id === 'y')
+check('没有模型渠道时返回 null', ks.deepSeekDonor([]) === null)
+check('坏地址不抛异常', ks.deepSeekDonor([mkCh('a', 'not a url')]) === null)
+check('只有 deepseek 预设允许复用', web.canReuseModelKey({ presetId: 'deepseek' }) === true)
+check('别家预设不允许复用', web.canReuseModelKey({ presetId: 'bocha' }) === false)
+check('shared 的端点判定与主机名一致（界面与主进程共用一份）',
+  web.isDeepSeekEndpoint('https://api.deepseek.com/v1') === true &&
+  web.isDeepSeekEndpoint('https://api.deepseek.com.evil.cn/v1') === false &&
+  web.isDeepSeekEndpoint('not a url') === false)
+
 console.log('响应归一化')
 const bochaJson = {
   code: 200,

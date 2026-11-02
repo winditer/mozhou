@@ -56,7 +56,7 @@ export type SearchErrorKind =
 export interface SearchChannel {
   id: string
   name: string
-  presetId?: 'bocha' | 'zhipu' | 'tavily' | 'serper' | 'searxng' | 'custom'
+  presetId?: 'deepseek' | 'bocha' | 'zhipu' | 'tavily' | 'serper' | 'searxng' | 'custom'
   baseUrl: string
   /** bearer: Authorization: Bearer <key>；query: ?<authParam>=<key>；header: 自定义头 */
   auth: 'bearer' | 'query' | 'header' | 'none'

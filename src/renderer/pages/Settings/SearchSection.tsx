@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Check, Plus, Trash2 } from 'lucide-react'
 import type { SearchChannel } from '@shared/types'
-import { SEARCH_PRESETS, normalizeSearchChannel } from '@shared/webSearch'
+import { SEARCH_PRESETS, canReuseModelKey, isDeepSeekEndpoint, normalizeSearchChannel } from '@shared/webSearch'
 import { mz } from '../../lib/bridge'
 import { Button, Input, Modal, Switch } from '../../components/ui'
 import { useApp } from '../../store/app'
@@ -20,7 +20,8 @@ export function SearchSection(): ReactNode {
   const ws = config?.settings.webSearch
   const channels = config?.searchChannels ?? []
 
-  const [keyState, setKeyState] = useState<Record<string, boolean>>({})
+  // 三种状态：'own' 自己存了 Key、'reuse' 可复用 DeepSeek 模型渠道的 Key、'none' 还没有
+  const [keyState, setKeyState] = useState<Record<string, 'own' | 'reuse' | 'none'>>({})
   // isNew 只影响弹窗标题：normalizeSearchChannel 一定会生成 id，光看 id 分不出新增还是编辑
   const [editing, setEditing] = useState<{ ch: SearchChannel; isNew: boolean } | null>(null)
   const idsKey = channels.map((c) => c.id).join('|')
@@ -28,15 +29,21 @@ export function SearchSection(): ReactNode {
   useEffect(() => {
     let alive = true
     void (async () => {
-      const list = useApp.getState().config?.searchChannels ?? []
+      const cfg = useApp.getState().config
+      const list = cfg?.searchChannels ?? []
+      // DeepSeek 的搜索接口与 chat 接口共用同一个 Key（主进程侧确实会复用），
+      // 所以这里只要模型渠道有 Key，搜索源就显示「复用」而不是「未配置」
+      const dsDonor = (cfg?.channels ?? []).find((c) => c.enabled !== false && isDeepSeekEndpoint(c.baseUrl))
+      const donorHasKey = dsDonor ? await mz.config.secretHas(`channel:${dsDonor.id}`).catch(() => false) : false
       const pairs = await Promise.all(
-        list.map(async (c): Promise<[string, boolean]> => {
-          if (c.auth === 'none') return [c.id, true]
+        list.map(async (c): Promise<[string, 'own' | 'reuse' | 'none']> => {
+          if (c.auth === 'none') return [c.id, 'own']
           try {
-            return [c.id, await mz.config.secretHas(`search:${c.id}`)]
+            if (await mz.config.secretHas(`search:${c.id}`)) return [c.id, 'own']
           } catch {
-            return [c.id, false]
+            /* 钥匙串读不到就当没有 */
           }
+          return [c.id, canReuseModelKey(c) && donorHasKey ? 'reuse' : 'none']
         })
       )
       if (alive) setKeyState(Object.fromEntries(pairs))
@@ -129,9 +136,20 @@ export function SearchSection(): ReactNode {
                   </span>
                   <span
                     className="ml-auto text-[10.5px] shrink-0"
-                    style={{ color: keyState[c.id] ? 'var(--ok)' : 'var(--text-faint)' }}
+                    style={{ color: keyState[c.id] === 'none' ? 'var(--text-faint)' : 'var(--ok)' }}
+                    title={
+                      keyState[c.id] === 'reuse'
+                        ? '复用「渠道与模型」里 DeepSeek 渠道的 Key，不用再填一次'
+                        : undefined
+                    }
                   >
-                    {c.auth === 'none' ? '无需 Key' : keyState[c.id] ? '已配置 Key' : '未配置 Key'}
+                    {c.auth === 'none'
+                      ? '无需 Key'
+                      : keyState[c.id] === 'own'
+                        ? '已配置 Key'
+                        : keyState[c.id] === 'reuse'
+                          ? '复用模型 Key'
+                          : '未配置 Key'}
                   </span>
                   <button className="chip surface-hover shrink-0" style={{ height: 20 }} onClick={() => setEditing({ ch: c, isNew: false })}>
                     编辑
@@ -326,6 +344,11 @@ function SearchDialog({
             <div className="mt-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
               只存在本机钥匙串里，不会写进 config.json，也不会传给任何模型。
             </div>
+            {draft.presetId === 'deepseek' && (
+              <div className="mt-1 text-[11px]" style={{ color: 'var(--ok)' }}>
+                留空即可：会自动复用「渠道与模型」里 DeepSeek 渠道的同一个 Key。
+              </div>
+            )}
           </label>
         )}
       </div>

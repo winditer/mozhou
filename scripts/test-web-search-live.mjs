@@ -51,6 +51,26 @@ const server = createServer((req, res) => {
     setTimeout(() => res.end('{}'), 3000)
     return
   }
+  if (mode === 'deepseek') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+      JSON.stringify({
+        results: [
+          {
+            rerank_score: 2.4,
+            title: '锦衣卫 - 维基百科',
+            url: 'https://zh.wikipedia.org/wiki/1',
+            snippet: '短',
+            summary: '锦衣卫设指挥使一人，正三品。',
+            content: '',
+            site_name: '维基百科',
+            date: '2026-06-01T00:00:00+00:00',
+            authority: 3
+          }
+        ]
+      })
+    )
+    return
+  }
   if (mode === 'empty') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"data":{"webPages":{"value":[]}}}')
     return
@@ -110,6 +130,18 @@ check('无 key 归 no-key', noKey.error?.kind === 'no-key', JSON.stringify(noKey
 
 const noCh = await runSearch({ ...base, channel: null, queries: ['x'], ttlHours: 0, timeoutMs: 500 })
 check('无搜索源归 no-channel', noCh.error?.kind === 'no-channel', JSON.stringify(noCh.error))
+
+mode = 'deepseek'
+const ds = await runSearch({
+  ...base,
+  channel: { ...channel, id: 'stub-ds', presetId: 'deepseek', baseUrl: `http://127.0.0.1:${port}/v1/tools/search` },
+  queries: ['明代锦衣卫品级'],
+  ttlHours: 0
+})
+check('deepseek 通道能拿到结果', ds.hits.length === 1, String(ds.hits.length))
+check('deepseek 用 summary 当摘要', ds.hits[0]?.snippet === '锦衣卫设指挥使一人，正三品。', String(ds.hits[0]?.snippet))
+check('deepseek 用 site_name 当来源', ds.hits[0]?.source === '维基百科', String(ds.hits[0]?.source))
+check('deepseek 无 error', !ds.error, JSON.stringify(ds.error))
 
 mode = 'ok'
 const multi = await runSearch({ ...base, queries: ['明代锦衣卫', '飞鱼服'], ttlHours: 0 })

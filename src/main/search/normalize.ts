@@ -36,7 +36,7 @@ export function hostOf(url: string): string {
   }
 }
 
-export function extractHits(_presetId: string | undefined, json: unknown, limit: number): SearchHit[] {
+export function extractHits(presetId: string | undefined, json: unknown, limit: number): SearchHit[] {
   if (!json || typeof json !== 'object') return []
   const list = pickList(json as Dict)
   const out: SearchHit[] = []
@@ -44,7 +44,16 @@ export function extractHits(_presetId: string | undefined, json: unknown, limit:
   for (const item of list) {
     const url = str(item.url) || str(item.link) || str(item.href)
     const title = str(item.title) || str(item.name)
-    const snippet = str(item.snippet) || str(item.summary) || str(item.content) || str(item.description)
+    /*
+     * DeepSeek 的响应里有两个摘要字段：snippet（100–200 字，给界面看）和
+     * summary（600–800 字，写明是「给模型读」）。我们注入提示词，要的是后者。
+     * 但不整段吃：5 条 × 800 字 ≈ 2500 token，比对话正文预算还大，截到 400 字既留住密度又不失控。
+     */
+    const summary = str(item.summary)
+    const snippet =
+      presetId === 'deepseek' && summary
+        ? summary.slice(0, 400)
+        : str(item.snippet) || summary || str(item.content) || str(item.description)
     // 没有可用链接的条目对「作者去核对」毫无价值，直接丢
     if (!url || !/^https?:\/\//i.test(url)) continue
     if (seen.has(url)) continue
@@ -53,7 +62,8 @@ export function extractHits(_presetId: string | undefined, json: unknown, limit:
       title: title || hostOf(url),
       url,
       snippet,
-      source: hostOf(url),
+      // site_name 是搜索服务给的人话站点名（「维基百科」），比 hostname 好读
+      source: str(item.site_name) || hostOf(url),
       publishedAt:
         str(item.datePublished) ||
         str(item.publish_date) ||

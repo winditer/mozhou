@@ -20,13 +20,23 @@ export interface SearchPreset {
 
 export const SEARCH_PRESETS: SearchPreset[] = [
   {
+    // 排第一：作者多半已经在用它写稿，Key 能直接复用，等于零新增成本
+    id: 'deepseek',
+    name: 'DeepSeek 搜索',
+    baseUrl: 'https://api.deepseek.com/v1/tools/search',
+    auth: 'bearer',
+    keyHint: 'DeepSeek API Key（可与模型渠道共用，可留空自动复用）',
+    keyUrl: 'https://platform.deepseek.com/api_keys',
+    note: '官方自研搜索引擎，按成功请求计费（约 0.005 元/次，空结果不计费）；Key 与 DeepSeek 模型渠道共用'
+  },
+  {
     id: 'bocha',
     name: '博查 Bocha',
     baseUrl: 'https://api.bochaai.com/v1/web-search',
     auth: 'bearer',
     keyHint: 'sk-...',
     keyUrl: 'https://open.bochaai.com',
-    note: '国内可直连，中文史料与工艺类结果质量好，推荐首选'
+    note: '国内可直连，中文史料与工艺类结果质量好'
   },
   {
     id: 'zhipu',
@@ -65,6 +75,34 @@ export const SEARCH_PRESETS: SearchPreset[] = [
   },
   { id: 'custom', name: '自定义（兼容博查格式）', baseUrl: '', auth: 'bearer', keyHint: '按服务商要求填写' }
 ]
+
+/**
+ * 某个接口地址是不是 DeepSeek 官方端点。
+ *
+ * 放在 shared 里：主进程用它决定「能不能借模型渠道的 Key」，
+ * 渲染进程用它决定设置页显示「复用模型 Key」还是「未配置 Key」。
+ * 两边各写一份正则的后果是界面说复用了、实际没复用——踩过一次。
+ *
+ * 只认 hostname 恰好匹配，别用「字符串里包含」：`api.deepseek.com.evil.cn` 这种假冒域名
+ * 一旦被当成官方端点，就会把别人的 token 发出去。
+ */
+export function hostOfUrl(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+export function isDeepSeekEndpoint(baseUrl: string): boolean {
+  const host = hostOfUrl(baseUrl)
+  return host === 'api.deepseek.com' || host.endsWith('.api.deepseek.com')
+}
+
+/** 这个搜索源是否允许「留空 Key，复用模型渠道那一个」 */
+export function canReuseModelKey(channel: Pick<SearchChannel, 'presetId'>): boolean {
+  return channel.presetId === 'deepseek'
+}
 
 export const DEFAULT_WEB_SEARCH: WebSearchSettings = {
   enabled: false,

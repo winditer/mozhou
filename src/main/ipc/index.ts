@@ -1,7 +1,17 @@
 import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename } from 'node:path'
-import type { Channel, ChatRequest, Config, FilePickResult, Project, ProjectMeta, SearchRunRequest, SearchRunResult } from '@shared/types'
+import type {
+  Channel,
+  ChatRequest,
+  Config,
+  FilePickResult,
+  Project,
+  ProjectMeta,
+  SearchChannel,
+  SearchRunRequest,
+  SearchRunResult
+} from '@shared/types'
 import type { StyleLibrary } from '@shared/styleLibrary'
 import type { SkillLibrary } from '@shared/skills'
 import { splitChapters, plainToHtml, countWords, uid } from '@shared/utils'
@@ -40,6 +50,8 @@ import { abortStream, listModels, streamChat, testChannel } from '../ai/registry
 import { buildDocx, buildHtml, buildMarkdown, buildPdf, buildText } from '../export/index'
 import { searchCacheFile } from '../paths'
 import { runSearch } from '../search/index'
+import { deepSeekDonor } from '../search/keySource'
+import { canReuseModelKey } from '@shared/webSearch'
 
 type Win = BrowserWindow | null
 
@@ -197,7 +209,7 @@ export function registerIpc(): void {
     const cfg = await loadConfig()
     const ws = cfg.settings.webSearch
     const channel = (cfg.searchChannels ?? []).find((c) => c.id === req.channelId && c.enabled !== false) ?? null
-    const apiKey = channel ? await getSecret(`search:${channel.id}`) : null
+    const apiKey = channel ? await searchKeyFor(channel, cfg) : null
     return runSearch({
       channel,
       apiKey,
@@ -275,6 +287,23 @@ export function registerIpc(): void {
 
 function isKeylessChannel(channel: Channel): boolean {
   return /127\.0\.0\.1|localhost/i.test(channel.baseUrl)
+}
+
+/**
+ * 搜索接口的 Key：先看自己有没有单独存。
+ *
+ * 没存时对 DeepSeek 预设做一次复用：作者已经在用 DeepSeek 写稿的话，
+ * 让他为「查资料」再贴一遍同一个 Key 是没有道理的——而绝大多数人做到这一步
+ * 会因为「不想再申请一个」直接放弃这个功能。
+ *
+ * 判定规则在 search/keySource.ts，那里有单独的测试（猜错等于发错 token）。
+ */
+async function searchKeyFor(channel: SearchChannel, cfg: Config): Promise<string | null> {
+  const own = await getSecret(`search:${channel.id}`)
+  if (own) return own
+  if (!canReuseModelKey(channel)) return null
+  const donor = deepSeekDonor(cfg.channels ?? [])
+  return donor ? await getSecret(`channel:${donor.id}`) : null
 }
 
 export function fileNameOf(p: string): string {
