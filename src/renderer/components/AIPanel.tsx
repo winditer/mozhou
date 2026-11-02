@@ -222,6 +222,11 @@ export function AIPanel({
           })
           external = outcome.text
           researchMeta = outcome.meta
+          // 这一轮没查（纯创作指令或虚构体系）：说出来。
+          // 不说的话作者只看到「联网·开」却没有任何来源，会以为检索静默坏了。
+          if (outcome.skipped) {
+            toast('这一轮没有联网：判断为创作指令或虚构设定，查到的反而是别人小说里的东西。', 'ok')
+          }
         } catch {
           /* 检索整体失败：按未联网处理，下面照常生成 */
         } finally {
