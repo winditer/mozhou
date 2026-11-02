@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { Chapter, Project } from '@shared/types'
+import type { Chapter, Project, ResearchMeta } from '@shared/types'
 import { estimateTokens, relativeTime, uid } from '@shared/utils'
 import { resolveTaskModel, useApp } from '../store/app'
 import { assembleContext } from '../lib/prompt'
-import { generateChatReply, generateDraft } from '../lib/generate'
+import { generateChatReply, generateCustom, generateDraft } from '../lib/generate'
+import { research } from '../lib/research'
+import { mz } from '../lib/bridge'
 import { abortChat } from '../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../lib/stream'
 import { Button, IconButton, Segmented, Switch, Textarea } from './ui'
@@ -153,6 +155,11 @@ export function AIPanel({
   const listRef = useRef<HTMLDivElement>(null)
   const resolved = resolveTaskModel(config, project, 'chat')
   const elapsed = useElapsed(streaming)
+  const webSearch = config?.settings.webSearch
+  // 本轮是否联网：作者每次发送前显式决定，不做自动判断
+  const [withSearch, setWithSearch] = useState(false)
+  const [searching, setSearching] = useState('')
+  const searchReady = Boolean(webSearch?.enabled && webSearch.channelId)
 
   useEffect(() => {
     const el = listRef.current
@@ -175,6 +182,53 @@ export function AIPanel({
     setStage('')
     setStreaming(true)
     try {
+      /*
+       * 联网检索必须在生成之前：外部资料要作为 messages 的一部分进去。
+       * 这里刻意吞掉一切异常——research() 内部已经把失败变成「未取得外部资料」块，
+       * 真正抛出来的只可能是意想不到的编码错误，那种情况也不该让作者连问题都问不出去。
+       */
+      let external = ''
+      let researchMeta: ResearchMeta | null = null
+      if (withSearch && webSearch?.channelId) {
+        setSearching('正在查资料…')
+        setStage('正在联网检索…')
+        try {
+          const outcome = await research(q, {
+            channelId: webSearch.channelId,
+            maxResults: webSearch.maxResults,
+            maxQueries: webSearch.maxQueries,
+            run: (req) => mz.search.run(req),
+            summarize: webSearch.summarize
+              ? async (raw) => {
+                  const st = useApp.getState()
+                  const r2 = resolveTaskModel(st.config, st.project!, 'chat')
+                  if (!r2) return null
+                  return generateCustom({
+                    project,
+                    chapter,
+                    channel: r2.channel,
+                    model: r2.model,
+                    task: 'chat',
+                    // 压缩只要准，不要发挥
+                    temperature: 0.2,
+                    budgets: st.config?.settings.tokenBudgets,
+                    system:
+                      '你是资料整理员。把检索结果压成中文要点，保留所有数字、专名、单位与年代；不要评论、不要加标题、不要合并条目。每条一段，以 [编号] 开头，编号与输入一致。',
+                    user: raw,
+                    onDelta: () => {}
+                  })
+                }
+              : undefined
+          })
+          external = outcome.text
+          researchMeta = outcome.meta
+        } catch {
+          /* 检索整体失败：按未联网处理，下面照常生成 */
+        } finally {
+          setSearching('')
+          setStage('')
+        }
+      }
       let acc = ''
       const r = await generateChatReply({
         project,
@@ -188,6 +242,7 @@ export function AIPanel({
         history,
         question: q,
         allowEdits,
+        external,
         library: useApp.getState().styleLibrary,
         skillLibrary: useApp.getState().skillLibrary,
         conventions: useApp.getState().config?.settings.genreConventions,
@@ -222,6 +277,8 @@ export function AIPanel({
             at: Date.now(),
             model: resolved.model,
             truncated: r.truncated || undefined,
+            // 检索痕迹挂在回答上：来源卡是"这句回答的依据"，刷新后要能重现
+            research: researchMeta ?? undefined,
             // 改动先存着不落地：是否应用由作者在预览里决定
             edits: parsed.ops.length ? parsed.ops : undefined,
             editsError: parsed.errors.length ? parsed.errors.join('；') : undefined
@@ -393,6 +450,31 @@ export function AIPanel({
                 >
                   {m.content}
                 </div>
+                {/* 来源卡：作者要能核对「这句话是从哪来的」，所以标题可点开原文 */}
+                {m.research && m.research.hits.length > 0 && (
+                  <details
+                    className="mt-1 rounded-lg px-2 py-1.5"
+                    style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}
+                  >
+                    <summary className="text-[11px] cursor-pointer" style={{ color: 'var(--text-dim)' }}>
+                      来源 {m.research.hits.length} 条{m.research.cached ? '（缓存）' : ''}
+                    </summary>
+                    <div className="mt-1 flex flex-col gap-1">
+                      {m.research.hits.map((h, i) => (
+                        <button
+                          key={h.url}
+                          className="text-left text-[11px] leading-relaxed"
+                          style={{ color: 'var(--accent)' }}
+                          title={h.url}
+                          onClick={() => void mz.app.openExternal(h.url)}
+                        >
+                          [{i + 1}] {h.title}
+                          <span style={{ color: 'var(--text-faint)' }}> · {h.source}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </details>
+                )}
                 {m.role === 'assistant' && (m.edits?.length || m.editsError) && (
                   <div className="mt-1 flex flex-col gap-1">
                     {m.editsError && (
@@ -480,6 +562,33 @@ export function AIPanel({
                 >
                   {allowEdits ? '可改稿' : '只聊天'}
                 </button>
+                {webSearch?.enabled && (
+                  <button
+                    className="chip surface-hover"
+                    style={{
+                      height: 18,
+                      padding: '0 6px',
+                      fontSize: 10,
+                      color: !searchReady ? 'var(--text-faint)' : withSearch ? 'var(--accent)' : 'var(--text-dim)'
+                    }}
+                    title={
+                      !searchReady
+                        ? '还没有配置搜索源，去「设置 → 联网搜索」里加一个'
+                        : withSearch
+                          ? '这一轮会先联网查资料再回答（消耗搜索额度）。点一下关掉。'
+                          : '这一轮先联网查资料再回答，事实类问题（史料、工艺、参数）建议打开。'
+                    }
+                    onClick={() => {
+                      if (!searchReady) {
+                        toast('还没有配置搜索源，请到「设置 → 联网搜索」里添加', 'error')
+                        return
+                      }
+                      setWithSearch((v) => !v)
+                    }}
+                  >
+                    {searching || (withSearch ? '联网·开' : '联网')}
+                  </button>
+                )}
               </div>
               {streaming ? (
                 <Button size="sm" onClick={() => abortChat()}>
@@ -625,6 +734,31 @@ function ContextView({ project, chapter }: { project: Project; chapter: Chapter 
           </div>
         ))}
       </div>
+
+      {(() => {
+        // 外部资料不是本书数据，它挂在最近一条带检索痕迹的回答上。
+        // 只显示「已注入 3 条」等于把黑箱换了个位置，所以连 query 一起摆出来。
+        const last = [...project.chat].reverse().find((m) => m.research?.hits.length)
+        if (!last?.research) return null
+        const r = last.research
+        return (
+          <div className="mt-2 rounded-lg px-2.5 py-2" style={{ background: 'var(--panel)', border: '1px solid var(--border)' }}>
+            <div className="flex items-center gap-2 mb-1">
+              <Eye size={11} style={{ color: 'var(--ok)' }} />
+              <span className="text-[11.5px] font-medium">外部资料</span>
+              <span className="ml-auto text-[10.5px]" style={{ color: 'var(--text-faint)' }}>
+                {r.hits.length} 条{r.cached ? ' · 缓存' : ''}
+              </span>
+            </div>
+            <div className="text-[10.5px] mb-1" style={{ color: 'var(--text-faint)' }}>
+              检索：{r.queries.join('；')} · {new Date(r.at).toLocaleString()}
+            </div>
+            <div className="text-[11px] selectable" style={{ color: 'var(--text-dim)' }}>
+              {r.hits.map((h) => h.title).join(' / ')}
+            </div>
+          </div>
+        )
+      })()}
 
       <div className="mt-3 text-[10.5px]" style={{ color: 'var(--text-faint)' }}>
         {genreBlock?.tokens ? `其中题材公约 ${genreBlock.tokens} tokens 位于系统提示词，` : ''}
