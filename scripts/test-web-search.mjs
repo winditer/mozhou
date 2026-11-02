@@ -139,5 +139,39 @@ check(
 check('坏形状不抛异常', Array.isArray(norm.extractHits('bocha', null, 5)))
 check('坏值不抛异常', Array.isArray(norm.extractHits('zhipu', 'oops', 5)))
 
+const cache = await load('src/main/search/cache.ts', 'cache')
+
+console.log('缓存')
+const k1 = cache.cacheKey('ch1', '明代 锦衣卫', 5)
+const k2 = cache.cacheKey('ch1', '明代 锦衣卫', 5)
+const k3 = cache.cacheKey('ch2', '明代 锦衣卫', 5)
+check('同参同 key', k1 === k2)
+check('换渠道换 key', k1 !== k3)
+check('query 影响 key', k1 !== cache.cacheKey('ch1', '宋代 官制', 5))
+
+const now = 1_700_000_000_000
+const file = {
+  v: 1,
+  entries: {
+    fresh: { at: now - 3600_000, hits: [{ title: 'a', url: 'https://a.com', snippet: 's', source: 'a.com' }] },
+    stale: { at: now - 48 * 3600_000, hits: [] }
+  }
+}
+const pruned = cache.pruneCache(file, now, 24, 500)
+check('过期条目被删', !pruned.entries.stale)
+check('未过期条目保留', Boolean(pruned.entries.fresh))
+
+const many = { v: 1, entries: {} }
+for (let i = 0; i < 12; i++) many.entries[`k${i}`] = { at: now - i * 1000, hits: [] }
+const capped = cache.pruneCache(many, now, 24, 10)
+check('超过上限裁到 cap', Object.keys(capped.entries).length === 0, String(Object.keys(capped.entries).length))
+check('空 hits 条目一律淘汰', Object.keys(cache.pruneCache(many, now, 24, 500).entries).length === 0)
+
+const many2 = { v: 1, entries: {} }
+for (let i = 0; i < 12; i++) many2.entries[`k${i}`] = { at: now - i * 1000, hits: [{ title: 't', url: `https://e.com/${i}`, snippet: 's', source: 'e.com' }] }
+const capped2 = cache.pruneCache(many2, now, 24, 10)
+check('有内容时按上限裁到 10', Object.keys(capped2.entries).length === 10, String(Object.keys(capped2.entries).length))
+check('保留最新的一条', Boolean(capped2.entries.k0) && !capped2.entries.k11)
+
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)
