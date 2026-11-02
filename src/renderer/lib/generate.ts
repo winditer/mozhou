@@ -1,4 +1,4 @@
-import type { Channel, Chapter, Project, TaskKind } from '@shared/types'
+import type { Channel, Chapter, Project, PromptMessage, TaskKind } from '@shared/types'
 import {
   BUDGET_KEYS,
   DEFAULT_TOKEN_BUDGETS,
@@ -465,6 +465,33 @@ export interface ChatReply {
   retried: boolean
 }
 
+/**
+ * 对话 messages 的装配。
+ *
+ * 抽成独立纯函数有两个原因：一是它必须能被逐字断言（不联网时的装配结果
+ * 不允许有任何漂移，见 scripts/test-chat-external.mjs），二是「外部资料插在哪」
+ * 这件事只该有一处真相。
+ *
+ * 外部资料紧跟【作品资料】、位于对话历史之前：它和本书资料同属"资料层"，
+ * 放在历史之后会变成临时附注，容易被上一轮回答带跑。
+ */
+export function buildChatMessages(p: {
+  system: string
+  contextText: string
+  history: { role: 'user' | 'assistant'; content: string }[]
+  question: string
+  external?: string
+}): PromptMessage[] {
+  const external = p.external?.trim()
+  return [
+    { role: 'system', content: p.system },
+    { role: 'user', content: `【作品资料】\n${p.contextText}` },
+    ...(external ? [{ role: 'user' as const, content: external }] : []),
+    ...p.history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user', content: p.question }
+  ]
+}
+
 export async function generateChatReply(
   p: GenParams & {
     history: { role: 'user' | 'assistant'; content: string }[]
@@ -473,6 +500,11 @@ export async function generateChatReply(
     library?: StyleLibrary | null
     /** 是否允许这一轮提出可直接应用的改动（mz-edit）。关掉就是纯聊天 */
     allowEdits?: boolean
+    /**
+     * 本轮检索到的【外部资料】块（见 lib/research.ts 的 formatExternal）。
+     * 不传 = 不联网，装配结果与改造前逐字一致。
+     */
+    external?: string
   }
 ): Promise<ChatReply> {
   const budgets = p.budgets ?? DEFAULT_TOKEN_BUDGETS
@@ -490,12 +522,13 @@ export async function generateChatReply(
     : ''
   const system = `${buildSystemPrompt(p.project, 'prose', p.library, p.conventions)}${skillHint ? `\n\n${skillHint}` : ''}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。${editHint}`
   const ctxText = contextToText(ctx)
-  const messages = [
-    { role: 'system' as const, content: system },
-    { role: 'user' as const, content: `【作品资料】\n${ctxText}` },
-    ...p.history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user' as const, content: p.question }
-  ]
+  const messages = buildChatMessages({
+    system,
+    contextText: ctxText,
+    history: p.history,
+    question: p.question,
+    external: p.external
+  })
   const budget = resolveBudget(budgets, BUDGET_KEYS.chatReply)
   let usedMax = budget
   let r = await sendChat({
