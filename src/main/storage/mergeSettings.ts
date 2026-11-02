@@ -16,6 +16,7 @@ import {
   type TokenBudget,
   type TokenBudgets
 } from '@shared/budgets'
+import { DEFAULT_WEB_SEARCH, normalizeWebSearch } from '@shared/webSearch'
 
 /** 出厂默认设置。与改造前的硬编码值逐项对齐，零行为变化。 */
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -52,7 +53,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // 空表 = 新书默认不带任何技法卡；作者在设置页勾了谁就出现谁
   defaultSkillIds: [],
   // 对话默认可以提改稿：真正的闸门是「应用前必须确认」，不是这个开关
-  allowChatEdits: true
+  allowChatEdits: true,
+  // 联网默认关：作者没主动打开之前，一次请求都不许发出去
+  webSearch: DEFAULT_WEB_SEARCH
 }
 
 /**
@@ -156,7 +159,9 @@ export function mergeSettings(raw: Partial<AppSettings> | undefined): AppSetting
     taskModels: { ...DEFAULT_SETTINGS.taskModels, ...(r.taskModels ?? {}) },
     tokenBudgets: mergeTokenBudgets(r.tokenBudgets),
     genreConventions: normalizeConventions(r.genreConventions),
-    defaultSkillIds: normalizeIdList(r.defaultSkillIds)
+    defaultSkillIds: normalizeIdList(r.defaultSkillIds),
+    // 老配置（1.7.1 之前）里没有这一项，逐键补默认并夹取范围
+    webSearch: normalizeWebSearch(r.webSearch)
   }
 }
 

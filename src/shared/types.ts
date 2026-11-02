@@ -41,6 +41,77 @@ export interface ModelEntry {
   enabled: boolean
 }
 
+/* ────────────────────────── 联网搜索 ────────────────────────── */
+
+export type SearchErrorKind =
+  | 'no-channel'
+  | 'no-key'
+  | 'auth'
+  | 'quota'
+  | 'network'
+  | 'timeout'
+  | 'bad-response'
+  | 'empty'
+
+export interface SearchChannel {
+  id: string
+  name: string
+  presetId?: 'bocha' | 'zhipu' | 'tavily' | 'serper' | 'searxng' | 'custom'
+  baseUrl: string
+  /** bearer: Authorization: Bearer <key>；query: ?<authParam>=<key>；header: 自定义头 */
+  auth: 'bearer' | 'query' | 'header' | 'none'
+  authParam?: string
+  headers?: Record<string, string>
+  enabled: boolean
+  note?: string
+}
+
+export interface WebSearchSettings {
+  /** 设置页总闸；关掉则界面不出现「联网」chip */
+  enabled: boolean
+  channelId: string | null
+  maxResults: number
+  maxQueries: number
+  cacheTtlHours: number
+  /** 是否用便宜模型把检索结果压成摘要再注入 */
+  summarize: boolean
+}
+
+/**
+ * 各家响应归一化之后的唯一形状：界面、缓存、提示词都只认它。
+ * 各家字段名全是私货，差异只允许存在主进程 normalize 那一处。
+ */
+export interface SearchHit {
+  title: string
+  url: string
+  snippet: string
+  /** 域名，界面上显示「来自 zh.wikipedia.org」比一条裸 URL 可信得多 */
+  source: string
+  publishedAt?: string
+}
+
+export interface SearchRunRequest {
+  channelId: string
+  queries: string[]
+  maxResults: number
+}
+
+export interface SearchRunResult {
+  hits: SearchHit[]
+  queries: string[]
+  cached: boolean
+  /** 失败不抛异常，一律落在这里：上层只需要一条降级路径 */
+  error?: { kind: SearchErrorKind; message: string }
+}
+
+/** 挂在 assistant 消息上的检索痕迹：刷新页面后来源卡还能重现 */
+export interface ResearchMeta {
+  queries: string[]
+  hits: SearchHit[]
+  cached: boolean
+  at: number
+}
+
 export type TaskKind = 'draft' | 'outline' | 'polish' | 'naming' | 'summary' | 'audit' | 'chat'
 
 export const TASK_LABELS: Record<TaskKind, string> = {
@@ -100,12 +171,19 @@ export interface AppSettings {
    * 给「模型对 JSON 服从度太差，每次都写坏」或「只想让它当陪聊」的作者留个开关。
    */
   allowChatEdits: boolean
+  /**
+   * 联网查资料。全局设置而不是每书一份：
+   * 它记的是「这个人愿不愿意联网」，不是某本书的创作设定。
+   */
+  webSearch: WebSearchSettings
 }
 
 export interface Config {
   version: number
   channels: Channel[]
   models: ModelEntry[]
+  /** 搜索源：与模型渠道平级，key 同样存 keytar（ref 前缀 search:） */
+  searchChannels: SearchChannel[]
   settings: AppSettings
 }
 
@@ -355,6 +433,8 @@ export interface ChatMessage {
   draftWords?: number
   /** 解析编辑块失败的原因，气泡下方显示，不许静默 */
   editsError?: string
+  /** 这一轮回答所依据的外部检索结果。有值就渲染来源卡 */
+  research?: ResearchMeta
 }
 
 export interface ContextToggles {
@@ -570,6 +650,10 @@ export interface MzApi {
     onThought(cb: (t: StreamThought) => void): () => void
     onDone(cb: (d: StreamDone) => void): () => void
     onError(cb: (e: StreamError) => void): () => void
+  }
+  /** 联网检索：key 与缓存都在主进程，渲染进程只拿归一化的 hits */
+  search: {
+    run(req: SearchRunRequest): Promise<SearchRunResult>
   }
   io: {
     exportFile(payload: { kind: 'md' | 'txt' | 'html' | 'docx' | 'pdf'; title: string; items: { title: string; content: string }[] }): Promise<FilePickResult>

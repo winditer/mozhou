@@ -1,9 +1,10 @@
 import { promises as fs } from 'node:fs'
 import { safeStorage } from 'electron'
-import type { Channel, Config, ModelEntry } from '@shared/types'
+import type { Channel, Config, ModelEntry, SearchChannel } from '@shared/types'
 import { configFile, secretsFile } from '../paths'
 import { readJson, writeJsonAtomic } from './jsonStore'
 import { DEFAULT_SETTINGS, mergeSettings, normalizeConventions } from './mergeSettings'
+import { normalizeSearchChannel } from '@shared/webSearch'
 
 /** 默认设置定义在 mergeSettings.ts（纯模块，便于单测），这里转出去保持既有引用 */
 export { DEFAULT_SETTINGS } from './mergeSettings'
@@ -12,6 +13,7 @@ export const DEFAULT_CONFIG: Config = {
   version: 1,
   channels: [],
   models: [],
+  searchChannels: [],
   settings: DEFAULT_SETTINGS
 }
 
@@ -21,6 +23,7 @@ export async function loadConfig(): Promise<Config> {
     version: raw.version ?? 1,
     channels: (raw.channels ?? []).map(normalizeChannel),
     models: (raw.models ?? []).map(normalizeModel),
+    searchChannels: (raw.searchChannels ?? []).map((c) => normalizeSearchChannel(c as Partial<SearchChannel>)),
     settings: mergeSettings(raw.settings)
   }
 }
@@ -57,6 +60,7 @@ export async function saveConfig(config: Config): Promise<Config> {
     version: 1,
     channels: (config.channels ?? []).map(normalizeChannel),
     models: (config.models ?? []).map(normalizeModel),
+    searchChannels: (config.searchChannels ?? []).map((c) => normalizeSearchChannel(c)),
     settings: {
       ...DEFAULT_SETTINGS,
       ...config.settings,

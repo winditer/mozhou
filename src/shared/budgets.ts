@@ -39,6 +39,7 @@ export type BudgetKey =
   | 'style.trial'
   | 'persona.generate'
   | 'chat.reply'
+  | 'search.summarize'
   | 'custom.default'
   | 'quickstart.title'
   | 'quickstart.settings'
@@ -111,6 +112,7 @@ export const BUDGET_KEYS = {
   styleTrial: 'style.trial',
   personaGenerate: 'persona.generate',
   chatReply: 'chat.reply',
+  searchSummarize: 'search.summarize',
   customDefault: 'custom.default',
   quickstartTitle: 'quickstart.title',
   quickstartSettings: 'quickstart.settings',
@@ -165,6 +167,9 @@ export const DEFAULT_TOKEN_BUDGETS: TokenBudgets = {
   // 12000 而不是 8192：1.4.0 起对话可以附 mz-edit 改动块，而 anchor 要把正文
   // 原话抄一遍，比自然语言啰嗦得多。实测一轮四五处改动 + 正常回答，8192 会截断。
   'chat.reply': fixed(12000),
+  // 检索结果压缩：一次 4–6 条摘要，输出约 600 字。给 1200 是留了「作者把
+  // maxResults 调到 8」的余量，同时不至于让压缩这一步变成第二次长文生成。
+  'search.summarize': fixed(1200),
   'custom.default': fixed(3000),
   'quickstart.title': fixed(1200),
   'quickstart.settings': fixed(6000),
