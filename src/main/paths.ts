@@ -50,3 +50,11 @@ export function skillLibraryFile(): string {
 export function backupDir(): string {
   return join(dataRoot(), 'backups')
 }
+
+/**
+ * 联网检索的缓存文件（全局共享，跨书复用）。
+ * 放 userData 根目录而不是各书目录：同一件事作者会在几本书里问。
+ */
+export function searchCacheFile(): string {
+  return join(dataRoot(), 'search-cache.json')
+}

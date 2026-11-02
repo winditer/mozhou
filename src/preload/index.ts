@@ -60,6 +60,9 @@ const api = {
     onDone: (cb: (d: StreamDone) => void) => on('ai:done', cb),
     onError: (cb: (e: { streamId: string; message: string }) => void) => on('ai:error', cb)
   },
+  search: {
+    run: (req: unknown) => invoke('search:run', req)
+  },
   io: {
     exportFile: (payload: unknown) => invoke('io:export', payload),
     importFile: () => invoke('io:import'),

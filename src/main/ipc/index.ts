@@ -1,7 +1,7 @@
 import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename } from 'node:path'
-import type { Channel, ChatRequest, Config, FilePickResult, Project, ProjectMeta } from '@shared/types'
+import type { Channel, ChatRequest, Config, FilePickResult, Project, ProjectMeta, SearchRunRequest, SearchRunResult } from '@shared/types'
 import type { StyleLibrary } from '@shared/styleLibrary'
 import type { SkillLibrary } from '@shared/skills'
 import { splitChapters, plainToHtml, countWords, uid } from '@shared/utils'
@@ -38,6 +38,8 @@ import {
 } from '../storage/projects'
 import { abortStream, listModels, streamChat, testChannel } from '../ai/registry'
 import { buildDocx, buildHtml, buildMarkdown, buildPdf, buildText } from '../export/index'
+import { searchCacheFile } from '../paths'
+import { runSearch } from '../search/index'
 
 type Win = BrowserWindow | null
 
@@ -184,6 +186,26 @@ export function registerIpc(): void {
   ipcMain.handle('ai:models', async (_e, channel: Channel, apiKey: string) => {
     const key = apiKey || (await getSecret(`channel:${channel.id}`))
     return listModels(channel, key)
+  })
+
+  /* ───── 联网检索 ───── */
+  /**
+   * 搜索源与 key 都在主进程解析：渲染进程只报 channelId，
+   * 拿不到明文 key，也就不会把它写进任何前端状态或日志里。
+   */
+  ipcMain.handle('search:run', async (_e, req: SearchRunRequest): Promise<SearchRunResult> => {
+    const cfg = await loadConfig()
+    const ws = cfg.settings.webSearch
+    const channel = (cfg.searchChannels ?? []).find((c) => c.id === req.channelId && c.enabled !== false) ?? null
+    const apiKey = channel ? await getSecret(`search:${channel.id}`) : null
+    return runSearch({
+      channel,
+      apiKey,
+      queries: (req.queries ?? []).slice(0, 3),
+      maxResults: Math.min(8, Math.max(3, req.maxResults || ws.maxResults)),
+      ttlHours: ws.cacheTtlHours,
+      cacheFile: searchCacheFile()
+    })
   })
 
   /* ───── 导入导出 ───── */

@@ -3,7 +3,7 @@
  * 运行：node scripts/test-config-merge.mjs
  *
  * 要守住的两件事：
- * 一、老配置（根本没有 tokenBudgets）打开后必须能用，27 个 key 一个不少；
+ * 一、老配置（根本没有 tokenBudgets）打开后必须能用，预算 key 一个不少；
  * 二、脏数据不许炸，但也不许「一坏就回默认」——结构坏的回默认，
  *     结构对、数值越界的只夹取。前者等于把预设悄悄清掉，后者把用户填的 999999
  *     悄悄换成 2600，两种都看不出痕迹，所以必须分开钉住。
@@ -50,6 +50,13 @@ function check(name, cond, extra) {
  */
 const AUDIT_BOOK = DEFAULT_SETTINGS.tokenBudgets['audit.book'].tokens
 
+/**
+ * 预算键总数。从默认表现取，不写死数字：
+ * 新增一个预算点（例如联网检索的 search.summarize）不该让这条回归测试
+ * 变成「顺手改个数字」，它真正要钉住的是「键一个不少」。
+ */
+const BUDGET_COUNT = Object.keys(DEFAULT_SETTINGS.tokenBudgets).length
+
 const keysOf = (b) => (b && typeof b === 'object' ? Object.keys(b) : [])
 const budgetOf = (s, key) => s?.tokenBudgets?.[key]
 
@@ -59,7 +66,7 @@ console.log('保留用户设置并补齐预算表')
   const s = mergeSettings({ themeId: 'ink', temperature: 0.5 })
   check('themeId 保留', s.themeId === 'ink', s.themeId)
   check('temperature 保留', s.temperature === 0.5, String(s.temperature))
-  check('tokenBudgets 正好 27 个 key', keysOf(s.tokenBudgets).length === 27, `实际 ${keysOf(s.tokenBudgets).length}`)
+  check(`tokenBudgets 正好 ${BUDGET_COUNT} 个 key`, keysOf(s.tokenBudgets).length === BUDGET_COUNT, `实际 ${keysOf(s.tokenBudgets).length}`)
   check('summary.auto 默认 600', budgetOf(s, 'summary.auto')?.tokens === 600, JSON.stringify(budgetOf(s, 'summary.auto')))
 
   // 其余字段也得是完整默认值，不能因为合并丢了字段
@@ -68,7 +75,7 @@ console.log('保留用户设置并补齐预算表')
   check('firstRunDone 用默认值', s.firstRunDone === DEFAULT_SETTINGS.firstRunDone, String(s.firstRunDone))
   check('lastProjectId 默认 null', s.lastProjectId === null, String(s.lastProjectId))
   check('shelfCoverSize 默认 m', s.shelfCoverSize === 'm', String(s.shelfCoverSize))
-  check('预算表 27 个 key 与默认表同集合',
+  check(`预算表 ${BUDGET_COUNT} 个 key 与默认表同集合`,
     [...keysOf(s.tokenBudgets)].sort().join('|') === keysOf(DEFAULT_SETTINGS.tokenBudgets).sort().join('|'))
   check('预算表 key 顺序与默认表一致',
     keysOf(s.tokenBudgets).join('|') === keysOf(DEFAULT_SETTINGS.tokenBudgets).join('|'),
@@ -85,7 +92,7 @@ console.log('单点覆盖不影响其它 key')
   check('按字数的 key 仍默认参数',
     JSON.stringify(budgetOf(s, 'draft.generate')) === JSON.stringify({ kind: 'perWord', perWord: 2.2, thinkPad: 1024, min: 2048, max: 16000 }),
     JSON.stringify(budgetOf(s, 'draft.generate')))
-  check('仍是 27 个 key', keysOf(s.tokenBudgets).length === 27, `实际 ${keysOf(s.tokenBudgets).length}`)
+  check(`仍是 ${BUDGET_COUNT} 个 key`, keysOf(s.tokenBudgets).length === BUDGET_COUNT, `实际 ${keysOf(s.tokenBudgets).length}`)
 
   const p = mergeSettings({ tokenBudgets: { 'draft.generate': { kind: 'perWord', perWord: 3, thinkPad: 500, min: 100, max: 9000 } } })
   check('perWord 覆盖生效',
@@ -122,20 +129,20 @@ console.log('对话额度旧默认迁移')
 console.log('老配置自动补齐')
 {
   const fromUndefined = mergeSettings(undefined)
-  check('undefined → 27 个 key', keysOf(fromUndefined.tokenBudgets).length === 27, `实际 ${keysOf(fromUndefined.tokenBudgets).length}`)
+  check(`undefined → ${BUDGET_COUNT} 个 key`, keysOf(fromUndefined.tokenBudgets).length === BUDGET_COUNT, `实际 ${keysOf(fromUndefined.tokenBudgets).length}`)
   check('undefined → 完整设置',
     fromUndefined.themeId === DEFAULT_SETTINGS.themeId && fromUndefined.dailyGoal === DEFAULT_SETTINGS.dailyGoal)
   check('undefined → 排版为默认', fromUndefined.typography.fontSize === DEFAULT_SETTINGS.typography.fontSize)
 
   const fromEmpty = mergeSettings({})
-  check('{} → 27 个 key', keysOf(fromEmpty.tokenBudgets).length === 27, `实际 ${keysOf(fromEmpty.tokenBudgets).length}`)
+  check(`{} → ${BUDGET_COUNT} 个 key`, keysOf(fromEmpty.tokenBudgets).length === BUDGET_COUNT, `实际 ${keysOf(fromEmpty.tokenBudgets).length}`)
   check('{} 与 undefined 结果一致', JSON.stringify(fromEmpty) === JSON.stringify(fromUndefined))
 
   // 完全照抄 JSON 走一遍，模拟真实读盘（老配置里没有这个字段）
   const legacy = JSON.parse(JSON.stringify({ themeId: 'ink', shelfCoverSize: 'sl', temperature: 0.7 }))
   const migrated = mergeSettings(legacy)
   check('老配置 sl 档位落到 s', migrated.shelfCoverSize === 's', String(migrated.shelfCoverSize))
-  check('老配置补齐 27 个 key', keysOf(migrated.tokenBudgets).length === 27, `实际 ${keysOf(migrated.tokenBudgets).length}`)
+  check(`老配置补齐 ${BUDGET_COUNT} 个 key`, keysOf(migrated.tokenBudgets).length === BUDGET_COUNT, `实际 ${keysOf(migrated.tokenBudgets).length}`)
   check('老配置 themeId 保留', migrated.themeId === 'ink', migrated.themeId)
   check('老配置 temperature 保留', migrated.temperature === 0.7, String(migrated.temperature))
   check('老配置没漏字段', Object.keys(migrated).sort().join('|') === Object.keys(DEFAULT_SETTINGS).sort().join('|'),
@@ -166,12 +173,12 @@ console.log('结构坏的条目回落默认')
   // 脏数据连累不到邻居
   const s = mergeSettings({ tokenBudgets: { 'audit.book': 'garbage', 'summary.auto': { kind: 'fixed', tokens: 800 } } })
   check('脏条目只影响自己', budgetOf(s, 'summary.auto')?.tokens === 800, JSON.stringify(budgetOf(s, 'summary.auto')))
-  check('脏条目仍凑满 27 个 key', keysOf(s.tokenBudgets).length === 27, `实际 ${keysOf(s.tokenBudgets).length}`)
+  check(`脏条目仍凑满 ${BUDGET_COUNT} 个 key`, keysOf(s.tokenBudgets).length === BUDGET_COUNT, `实际 ${keysOf(s.tokenBudgets).length}`)
 
   // tokenBudgets 整个坏掉时也不能炸
   for (const bad of [null, 'garbage', 42, []]) {
     const r = mergeSettings({ tokenBudgets: bad })
-    check(`tokenBudgets 是 ${JSON.stringify(bad)} 也补齐 27 个`, keysOf(r.tokenBudgets).length === 27, `实际 ${keysOf(r.tokenBudgets).length}`)
+    check(`tokenBudgets 是 ${JSON.stringify(bad)} 也补齐 27 个`, keysOf(r.tokenBudgets).length === BUDGET_COUNT, `实际 ${keysOf(r.tokenBudgets).length}`)
     check(`tokenBudgets 是 ${JSON.stringify(bad)} 时 audit.book 默认`, budgetOf(r, 'audit.book')?.tokens === AUDIT_BOOK)
   }
 }
@@ -215,7 +222,7 @@ console.log('脏键与副作用')
     tokenBudgets: { 'audit.book': { kind: 'fixed', tokens: 900 }, 'no.such.key': { kind: 'fixed', tokens: 10 } }
   })
   check('未知 key 不会出现在结果里', !Object.prototype.hasOwnProperty.call(s.tokenBudgets, 'no.such.key'))
-  check('结果仍正好 27 个 key', keysOf(s.tokenBudgets).length === 27, `实际 ${keysOf(s.tokenBudgets).length}`)
+  check(`结果仍正好 ${BUDGET_COUNT} 个 key`, keysOf(s.tokenBudgets).length === BUDGET_COUNT, `实际 ${keysOf(s.tokenBudgets).length}`)
   check('未知 key 存在过也不影响 audit.book', budgetOf(s, 'audit.book')?.tokens === 900)
 
   const before = JSON.stringify(DEFAULT_SETTINGS)
@@ -310,8 +317,38 @@ console.log('默认设置与改造前一致')
   check('temperature 0.85', DEFAULT_SETTINGS.temperature === 0.85, String(DEFAULT_SETTINGS.temperature))
   check('showWordCountBar true', DEFAULT_SETTINGS.showWordCountBar === true)
   check('firstRunDone false', DEFAULT_SETTINGS.firstRunDone === false)
-  check('默认带 27 个预算', keysOf(DEFAULT_SETTINGS.tokenBudgets).length === 27, `实际 ${keysOf(DEFAULT_SETTINGS.tokenBudgets).length}`)
+  check('默认带 27 个预算', keysOf(DEFAULT_SETTINGS.tokenBudgets).length === BUDGET_COUNT, `实际 ${keysOf(DEFAULT_SETTINGS.tokenBudgets).length}`)
   check('默认预算就是 DEFAULT_TOKEN_BUDGETS', DEFAULT_SETTINGS.tokenBudgets === undefined ? false : DEFAULT_SETTINGS.tokenBudgets['audit.book'].tokens === AUDIT_BOOK)
+}
+
+/* ── 9. 联网搜索的老配置迁移 ── */
+console.log('联网搜索设置')
+{
+  const fresh = mergeSettings({})
+  check('没有这一项时默认关闭', fresh.webSearch.enabled === false)
+  check('默认 maxResults 5', fresh.webSearch.maxResults === 5, String(fresh.webSearch.maxResults))
+  check('默认 maxQueries 2', fresh.webSearch.maxQueries === 2, String(fresh.webSearch.maxQueries))
+  check('默认 channelId 为空', fresh.webSearch.channelId === null)
+
+  const wild = mergeSettings({ webSearch: { maxResults: 99, maxQueries: 9, cacheTtlHours: -1 } })
+  check(
+    '越界值被夹取',
+    wild.webSearch.maxResults === 8 && wild.webSearch.maxQueries === 3 && wild.webSearch.cacheTtlHours === 0,
+    JSON.stringify(wild.webSearch)
+  )
+
+  let threw = false
+  try {
+    mergeSettings({ webSearch: 'garbage' })
+  } catch {
+    threw = true
+  }
+  check('脏值不抛异常', !threw)
+  check(
+    '脏值回默认',
+    mergeSettings({ webSearch: 'garbage' }).webSearch.enabled === false &&
+      mergeSettings({ webSearch: 42 }).webSearch.maxResults === 5
+  )
 }
 
 console.log(`\n${pass} 通过, ${fail} 失败`)
