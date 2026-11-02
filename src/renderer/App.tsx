@@ -59,11 +59,17 @@ export function App(): ReactNode {
         hit.click()
         return true
       },
-      /** 给受控 input 赋值：必须走原型上的 value setter，否则 React 收不到这次改动 */
+      /**
+       * 给受控输入框赋值：必须走原型上的 value setter，否则 React 收不到这次改动。
+       *
+       * textarea 要用自己的原型：拿 HTMLInputElement 的 setter 去 call 一个 textarea
+       * 会抛「Illegal invocation」——AI 对话输入框就是 textarea，验收脚本踩过这个坑。
+       */
       typeInto: (selector: string, value: string): boolean => {
-        const el = document.querySelector(selector) as HTMLInputElement | null
+        const el = document.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement | null
         if (!el) return false
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
         setter?.call(el, value)
         el.dispatchEvent(new Event('input', { bubbles: true }))
         return true
