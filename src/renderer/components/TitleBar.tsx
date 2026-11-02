@@ -79,13 +79,21 @@ export function TitleBar(): ReactNode {
         <IconButton onClick={() => setView('settings')} active={view === 'settings'} title="设置（⌘,）">
           <SettingsIcon size={15} />
         </IconButton>
+        {/*
+          Windows/Linux 下主窗口是 frame: false（见 src/main/index.ts createWindow），
+          系统标题栏和系统菜单栏都不画了，所以这三个按钮是唯一的窗口控制入口，必须留着。
+          它们走 preload 的 window.mz.app.* → 主进程 ipcMain 的 win:minimize/maximize/close；
+          maximize 那侧是 isMaximized() ? unmaximize() : maximize()，所以同一个按钮点两次
+          就是「最大化 ↔ 还原」来回切。
+          mac 不渲染它们：红绿灯由系统画，hiddenInset 下位置由 trafficLightPosition 控制。
+        */}
         {!isMac && (
           <>
             <div style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 4px' }} />
             <IconButton onClick={() => window.mz.app.minimize()} title="最小化">
               <Minus size={15} />
             </IconButton>
-            <IconButton onClick={() => window.mz.app.maximize()} title="最大化">
+            <IconButton onClick={() => window.mz.app.maximize()} title="最大化 / 还原">
               <Square size={13} />
             </IconButton>
             <IconButton onClick={() => window.mz.app.close()} title="关闭">

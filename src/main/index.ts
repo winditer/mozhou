@@ -16,6 +16,9 @@ if (!gotLock) {
   app.quit()
 }
 
+// 平台开关集中在这里：createWindow 和 buildMenu 都要按平台分叉，各写一份容易走岔。
+const isMac = process.platform === 'darwin'
+
 let mainWindow: BrowserWindow | null = null
 
 function createWindow(): void {
@@ -26,11 +29,30 @@ function createWindow(): void {
     minHeight: 680,
     show: false,
     backgroundColor: '#f7f8fa',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    // 标题栏高 42px（.titlebar），右侧图标按钮 30px、垂直居中 → 中线在 21px。
-    // 系统红绿灯直径 12px，要落在同一条中线上，顶部就得是 21 - 12/2 = 15。
-    // 以前写 20，灯心在 26，比右边那排按钮低 5px，看起来像没对齐。
-    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 15 } : undefined,
+    // 只有两套窗口装饰可选，二选一，不能叠：
+    // - macOS：hiddenInset，红绿灯仍由系统画，但要浮在自绘顶栏上（位置见下）；
+    // - Windows/Linux：frame: false 走真正无边框。
+    //   以前这里给非 mac 留的是 titleBarStyle: 'default'，那是完整原生窗口框 ——
+    //   系统标题栏（图标+「墨舟 Mozhou」+最小化/最大化/关闭）、系统菜单栏（编辑/视图/窗口）
+    //   会全部画出来，和 TitleBar.tsx 的自绘顶栏叠成上下两条栏、左右两套按钮。
+    //   DESIGN.md §6 要的是「无边框标题栏 + 自绘顶栏」，所以非 mac 一律 frame: false：
+    //   没有 frame 就没有原生标题栏，Windows/Linux 的菜单栏也属于原生窗口框的一部分，一并消失。
+    ...(isMac
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          // 标题栏高 42px（.titlebar），右侧图标按钮 30px、垂直居中 → 中线在 21px。
+          // 系统红绿灯直径 12px，要落在同一条中线上，顶部就得是 21 - 12/2 = 15。
+          // 以前写 20，灯心在 26，比右边那排按钮低 5px，看起来像没对齐。
+          trafficLightPosition: { x: 16, y: 15 }
+        }
+      : {
+          // 只去掉窗口装饰，不顺手把系统行为也去掉：thickFrame 默认为 true，
+          // 所以无边框窗口在 Windows 上仍然保留 WS_THICKFRAME —— 拖边缘可缩放、有阴影和动画；
+          // roundedCorners 默认 true，Win11 上依然会被 DWM 加圆角（Win10 没有，这点接受）。
+          // 拖动/双击标题栏最大化靠 .titlebar 的 -webkit-app-region: drag，Electron 会把
+          // drag 区当非客户区处理（只有 transparent 窗口会丢掉双击最大化，我们不是）。
+          frame: false
+        }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -103,7 +125,18 @@ function createWindow(): void {
 }
 
 function buildMenu(): void {
-  const isMac = process.platform === 'darwin'
+  // 结论：frame: false 只让菜单栏不再绘制，不会让 accelerator 失效，所以这里必须保持原样。
+  // 依据：accelerator 是挂在窗口上的快捷键，frame 管的是「菜单栏那块 UI 画不画」；
+  // 反过来的证据在 Electron 文档里 —— before-input-event 的 event.preventDefault 被描述为
+  // 「同时拦掉页面的 keydown/keyup 和菜单快捷键」（想只拦菜单得用 setIgnoreMenuShortcuts），
+  // 说明菜单快捷键是一条独立于窗口装饰的通道，去掉 frame 不影响它。
+  // 于是 Windows/Linux 无边框之后：菜单栏看不见，但下面的 Ctrl+Shift+F（沉浸写作）以及
+  // reload / toggleDevTools / zoomIn / zoomOut 这些 role 项的默认快捷键照旧生效，
+  // 开发者要的「重新加载 / 开发者工具 / 缩放」也就还留着（只是没了可视入口，找不到就按快捷键）。
+  // 不再用 before-input-event 把 Ctrl+Shift+F 补一遍：两条路都挂着会一次按键触发两次
+  // （toggle 一开一关等于没反应），而且 preventDefault 还会连带吃掉渲染层的按键
+  // （Ctrl+F 在 Workspace 里是自己监听 window keydown 的，不能被主进程抢掉）。
+  // 唯一需要在 Windows 实机上确认的：打包后按 Ctrl+Shift+F，左栏应能收起/展开。
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
       ? [
