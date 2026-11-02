@@ -1,12 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import { ArrowRight, BookMarked, BookOpen, Database, Fingerprint, Gauge, Info, ListChecks, Palette, PenLine, Plug, Sparkles } from 'lucide-react'
+import { ArrowRight, BookMarked, BookOpen, Database, Fingerprint, Gauge, Globe, Info, ListChecks, Palette, PenLine, Plug, Sparkles } from 'lucide-react'
 import { AboutSection } from './AboutSection'
 import { BudgetsSection } from './BudgetsSection'
 import { AppearanceSection } from './AppearanceSection'
 import { ChannelsSection } from './ChannelsSection'
 import { DataSection } from './DataSection'
 import { GenresSection } from './GenresSection'
+import { SearchSection } from './SearchSection'
 import { SkillsSection } from './SkillsSection'
 import { PreferencesSection } from './PreferencesSection'
 import { StyleLibrarySection } from './StyleLibrary'
@@ -16,6 +17,7 @@ import { useApp } from '../../store/app'
 
 type SectionId =
   | 'channels'
+  | 'search'
   | 'tasks'
   | 'style'
   | 'genres'
@@ -28,6 +30,7 @@ type SectionId =
 
 const NAV: { id: SectionId; label: string; icon: LucideIcon }[] = [
   { id: 'channels', label: '渠道与模型', icon: Plug },
+  { id: 'search', label: '联网搜索', icon: Globe },
   { id: 'tasks', label: '任务分配', icon: ListChecks },
   { id: 'style', label: '文风分身库', icon: Fingerprint },
   { id: 'genres', label: '题材公约', icon: BookMarked },
@@ -139,6 +142,7 @@ export function Settings(): ReactNode {
         <div className="mx-auto w-full" style={{ maxWidth: 860, padding: '22px 26px 72px' }}>
           <FirstRunGuide />
           {active === 'channels' && <ChannelsSection />}
+          {active === 'search' && <SearchSection />}
           {active === 'tasks' && <TasksSection />}
           {active === 'style' && <StyleLibrarySection />}
           {active === 'genres' && <GenresSection />}
