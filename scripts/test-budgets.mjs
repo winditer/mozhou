@@ -209,8 +209,9 @@ console.log('BUDGET_KEYS 结构')
   const values = Object.values(BUDGET_KEYS ?? {})
   const defaultKeys = Object.keys(DEFAULT_TOKEN_BUDGETS ?? {})
 
-  check('BUDGET_KEYS 正好 27 项', names.length === 27, `实际 ${names.length}`)
-  check('默认表正好 27 个 key', defaultKeys.length === 27, `实际 ${defaultKeys.length}`)
+  // 张数不写死：新增预算点（例如联网检索的 search.summarize）不该让这里变成改数字。
+  // 真正要钉的是「两张表一一对应、无重复、命名规范」，下面几条已经逐一验证。
+  check('BUDGET_KEYS 与默认表项数一致', names.length === defaultKeys.length, `BUDGET_KEYS ${names.length} / 默认表 ${defaultKeys.length}`)
 
   const dupes = values.filter((v, i) => values.indexOf(v) !== i)
   check('BUDGET_KEYS 无重复值', dupes.length === 0, dupes.join(','))
@@ -232,10 +233,13 @@ console.log('BUDGET_KEYS 结构')
     `BUDGET_KEYS: ${Object.values(BUDGET_KEYS).join('|')}\n默认表: ${Object.keys(DEFAULT_TOKEN_BUDGETS).join('|')}`
   )
   check('预算种类只有两种', defaultKeys.every((k) => ['fixed', 'perWord'].includes(DEFAULT_TOKEN_BUDGETS[k].kind)))
-  check('fixed 18 个 / perWord 9 个',
-    defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length === 18 &&
-      defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'perWord').length === 9,
-    `fixed ${defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length}`
+  // 只要求两类都非空且合计等于总数：具体几条属于随时会变的产品决策
+  const fixedCount = defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'fixed').length
+  const perWordCount = defaultKeys.filter((k) => DEFAULT_TOKEN_BUDGETS[k].kind === 'perWord').length
+  check(
+    '两类预算都存在且合计等于总数',
+    fixedCount > 0 && perWordCount > 0 && fixedCount + perWordCount === defaultKeys.length,
+    `fixed ${fixedCount} / perWord ${perWordCount} / 共 ${defaultKeys.length}`
   )
   check('默认预算都是合法值', defaultKeys.every((k) => JSON.stringify(clampBudget(DEFAULT_TOKEN_BUDGETS[k])) === JSON.stringify(DEFAULT_TOKEN_BUDGETS[k])))
   // 设置页要用难读的 key 找中文名，camelCase 名必须能反查出字面 key
