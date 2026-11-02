@@ -293,10 +293,17 @@
   line-height: var(--editor-line);
   color: var(--editor-text);
   max-width: var(--editor-width);
-  margin: 0 auto;
+  /* 居中不用 margin:auto：auto 不是可插值量，AI/搜索/旁批面板一开关正文就会瞬移。
+     这里由 BookEditor 把「(可用宽 - 页宽)/2」算成 px 塞进 --editor-shift，再交给 transition 滑动。 */
+  margin: 0 0 0 var(--editor-shift, 0px);
   padding: 48px 40px 40vh;
   user-select: text;
   caret-color: var(--accent);
+}
+
+/* 首帧量完宽度才开过渡，否则启动时正文会从左侧滑进来 */
+.mz-editor.shift-ready .ProseMirror {
+  transition: margin-left 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .mz-editor .ProseMirror p {
   margin: 0 0 var(--editor-para-gap);

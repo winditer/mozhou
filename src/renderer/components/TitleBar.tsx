@@ -4,7 +4,7 @@ import { BookOpen, Check, CircleDot, Feather, Loader2, Minus, PanelRight, Settin
 import { IconButton } from './ui'
 
 export function TitleBar(): ReactNode {
-  const { view, project, saving, savedAt, setView, toggleAiPanel, aiPanelOpen, appInfo, flush } = useApp()
+  const { view, project, saving, savedAt, setView, toggleAiPanel, aiPanelOpen, appInfo } = useApp()
   const isMac = appInfo?.platform === 'darwin'
   const isWorkspace = view === 'workspace'
 
@@ -67,14 +67,9 @@ export function TitleBar(): ReactNode {
 
       <div className="flex items-center gap-0.5 no-drag">
         {isWorkspace && (
-          <>
-            <IconButton onClick={() => void flush()} title="立即保存（⌘S）">
-              <Check size={15} />
-            </IconButton>
-            <IconButton onClick={toggleAiPanel} active={aiPanelOpen} title="AI 面板">
-              <PanelRight size={15} />
-            </IconButton>
-          </>
+          <IconButton onClick={toggleAiPanel} active={aiPanelOpen} title="AI 面板">
+            <PanelRight size={15} />
+          </IconButton>
         )}
         <IconButton onClick={() => setView('settings')} active={view === 'settings'} title="设置（⌘,）">
           <SettingsIcon size={15} />

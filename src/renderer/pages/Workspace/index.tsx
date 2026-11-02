@@ -32,6 +32,12 @@ import { mz } from '../../lib/bridge'
 /** 旁批(320) + AI 面板(372) 同时开会把正文挤没；不低于这个宽度才允许两个都开 */
 const SIDE_PANELS_MIN_WIDTH = 1500
 
+/**
+ * 沉浸模式下 AI 面板浮在右上（width 372 + right 14 + 16 的呼吸间距）。
+ * 这块宽度要从正文可用宽里扣掉，否则浮层会直接压住正文每行的末尾两三个字。
+ */
+const FOCUS_AI_RESERVE = 372 + 14 + 16
+
 const RAIL: { key: 'write' | 'outline' | 'bible' | 'ideas' | 'style' | 'recital' | 'audit' | 'stats'; label: string; icon: ReactNode }[] = [
   { key: 'write', label: '写作', icon: <PenLine size={17} /> },
   { key: 'outline', label: '大纲', icon: <ListTree size={17} /> },
@@ -528,7 +534,15 @@ export function Workspace(): ReactNode {
       )}
 
       {/* 主区域 */}
-      <div className="flex-1 min-w-0 flex flex-col" style={{ background: 'var(--editor-bg)' }}>
+      <div
+        className="flex-1 min-w-0 flex flex-col"
+        style={{
+          background: 'var(--editor-bg)',
+          // 沉浸模式下 AI 面板是浮层、不占位，这里替它让出宽度，正文就不会被盖住
+          paddingRight: focusMode && aiPanelOpen ? FOCUS_AI_RESERVE : 0,
+          transition: 'padding-right 200ms cubic-bezier(0.2, 0.8, 0.2, 1)'
+        }}
+      >
         {tab === 'write' && (
           <>
             <div

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -139,6 +139,36 @@ export function BookEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapterId, editor, externalEditRev])
 
+  /*
+   * 正文列的居中偏移。
+   *
+   * 主区宽度会随「AI 面板 / 搜索 / 旁批 / 章节列表 / 图标栏」开关而变化，而 CSS 的
+   * margin:auto 居中是不可过渡的——面板一关，正文是「瞬移」过去的，看起来像位置算错了。
+   * 这里把「(可用宽 - 页宽)/2」算成 px，交给 CSS transition 去滑动。
+   */
+  const [shift, setShift] = useState(0)
+  const [shiftReady, setShiftReady] = useState(false)
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const measure = (): void => {
+      const pageW = parseFloat(getComputedStyle(el).getPropertyValue('--editor-width')) || 760
+      // clientWidth 已排除滚动条；页宽比可用宽还大时贴左（此时 max-width 自然收窄）
+      setShift(Math.max(0, Math.round((el.clientWidth - pageW) / 2)))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // 首次量完再开过渡，避免启动时正文从左边滑进来
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setShiftReady(true))
+    return () => cancelAnimationFrame(id)
+  }, [])
+
   if (!chapter) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -233,7 +263,8 @@ export function BookEditor({
 
       <div
         ref={scrollRef}
-        className={`flex-1 min-h-0 overflow-auto scroll-thin mz-editor ${dimUnfocused ? 'dim-unfocused' : ''} ${typewriter ? 'typewriter' : ''}`}
+        className={`flex-1 min-h-0 overflow-auto scroll-thin mz-editor ${dimUnfocused ? 'dim-unfocused' : ''} ${typewriter ? 'typewriter' : ''} ${shiftReady ? 'shift-ready' : ''}`}
+        style={{ '--editor-shift': `${shift}px` } as CSSProperties}
       >
         <EditorContent editor={editor} />
       </div>

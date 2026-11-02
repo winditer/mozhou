@@ -29,6 +29,11 @@
 
 ## 更新日志
 
+### 1.8.1
+- **修：写作区在开关 AI 面板时会「瞬移」**。正文列宽一直是排版设置里的「页宽」（默认 760px），但居中用的是 `margin: auto`——它在「主区剩余空间」里居中，而主区宽度会被图标栏 54 + 章节列表 + AI 面板 372 / 搜索 320 / 旁批 320 吃掉。于是关掉 AI 面板时正文会横跳 186px（1440 宽的窗口实测），看着像位置算错了。现在居中偏移由 JS 按容器宽度算成 px、交给 `transition` 滑动（200ms），位置照旧会变，但不再是硬跳。`margin: auto` 不能加过渡——`auto` 本身不是可插值量。
+- **修：沉浸模式下 AI 浮层压住正文**。沉浸时 AI 面板是 `position: fixed` 浮层，完全不躲正文：1440 宽窗口下浮层左边界 1054、正文右边界 1100，压住 46px，每行末尾两三个字被盖掉。现在浮层打开时主区让出 402px（372 + 右边距 14 + 16 呼吸），正文左移但仍完整可见，实测重叠 0。
+- **改：去掉标题栏的「立即保存」按钮**。自动保存已经在跑（保存中 / 已自动保存 / 未保存 三种状态照旧显示在左上角），⌘S 依然可以手动存，那个勾号按钮只是重复了一遍状态。
+
 ### 1.8.0
 - **新：AI 对话可以联网查资料**。写作者要问的很多事不在模型的记忆里——明代锦衣卫的品级、某种釉料的烧成温度、某个产品的工艺顺序。对话输入框下面多了一个「联网」开关：点成 `联网·开` 再发送，这一轮会先检索再回答；回答下面挂「来源 N 条」，展开能看到标题与站点，点一条打开原文。来源随消息一起存进作品，刷新后还在。
 - **不是工具调用，是检索注入**。AI 层没有 function calling 通道（许多第三方中转不保证 `tools` 透传，理由见 `src/shared/editProtocol.ts` 开头），所以检索在主进程完成，命中摘要作为一段【外部资料】注入到【作品资料】之后、对话历史之前（user 角色，不是 system）。**联网关掉时，发给模型的 messages 与改造前逐字一致**——这条由 `scripts/test-chat-external.mjs` 钉死。
@@ -207,8 +212,8 @@ npm run build         # electron-vite build → out/
 ### 打包
 
 ```bash
-npm run dist:mac      # → release/Mozhou-1.8.0-arm64.dmg / -x64.dmg（同时出 zip）
-npm run dist:win      # → release/Mozhou-Setup-1.8.0.exe（electron-builder 26 自带 NSIS，macOS 上也能交叉构建）
+npm run dist:mac      # → release/Mozhou-1.8.1-arm64.dmg / -x64.dmg（同时出 zip）
+npm run dist:win      # → release/Mozhou-Setup-1.8.1.exe（electron-builder 26 自带 NSIS，macOS 上也能交叉构建）
 npm run dist:dir      # 只出未压缩目录，调试打包问题用
 ```
 
@@ -216,15 +221,15 @@ npm run dist:dir      # 只出未压缩目录，调试打包问题用
 
 | 产物 | 说明 |
 |---|---|
-| `release/Mozhou-1.8.0-arm64.dmg` | Apple Silicon 安装镜像（推荐） |
-| `release/Mozhou-1.8.0-x64.dmg` | Intel 安装镜像 |
-| `release/Mozhou-1.8.0-arm64.zip` / `-x64.zip` | 解压得到 `Mozhou.app`，拖进「应用程序」即可 |
-| `release/Mozhou-Setup-1.8.0.exe` | Windows x64 安装包（NSIS，未签名，SmartScreen 会提示一次） |
+| `release/Mozhou-1.8.1-arm64.dmg` | Apple Silicon 安装镜像（推荐） |
+| `release/Mozhou-1.8.1-x64.dmg` | Intel 安装镜像 |
+| `release/Mozhou-1.8.1-arm64.zip` / `-x64.zip` | 解压得到 `Mozhou.app`，拖进「应用程序」即可 |
+| `release/Mozhou-Setup-1.8.1.exe` | Windows x64 安装包（NSIS，未签名，SmartScreen 会提示一次） |
 | `release/mac-arm64/Mozhou.app` | 解包后的 arm64 应用本体 |
 
-构建记录（含 sha256）见 `release/BUILD-1.8.0.md`。
+构建记录（含 sha256）见 `release/BUILD-1.8.1.md`。
 
-> **关于 .dmg**：制作 dmg 要调 `hdiutil` 挂载磁盘镜像。受限沙箱/CI 容器里可能被系统拒绝（`hdiutil create: Operation not permitted`）；1.8.0 是在本机正常权限下构建的，dmg 已随仓库产出。若你的环境拒绝，可用同目录的 `.zip`，或在桌面环境运行 `npm run dist:mac` 重新生成。
+> **关于 .dmg**：制作 dmg 要调 `hdiutil` 挂载磁盘镜像。受限沙箱/CI 容器里可能被系统拒绝（`hdiutil create: Operation not permitted`）；1.8.1 是在本机正常权限下构建的，dmg 已随仓库产出。若你的环境拒绝，可用同目录的 `.zip`，或在桌面环境运行 `npm run dist:mac` 重新生成。
 
 > 首次打包需要下载 Electron 预编译包（约 100 MB），electron-builder 会缓存在 `~/Library/Caches/electron-builder`。国内网络建议先设 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
@@ -330,7 +335,7 @@ docs/
 
 - **未做代码签名 / 公证**（没有 Apple Developer ID）。首次打开需要右键 → 打开；分发给他人在 Gatekeeper 下也会提示一次。
 - 打包产物默认是 `.zip`（`.app` 已打好、可直接运行）。`.dmg` 的生成需要 `hdiutil` 挂载磁盘镜像，在受限沙箱里会被拒绝，请在本机运行 `bash scripts/make-dmg.sh`。
-- Windows 安装包（NSIS）1.8.0 已在 macOS 上交叉构建（electron-builder 26 自带 NSIS）。仍未做 Windows 代码签名，建议在 Windows 实机上安装冒烟一次。
+- Windows 安装包（NSIS）1.8.1 已在 macOS 上交叉构建（electron-builder 26 自带 NSIS）。仍未做 Windows 代码签名，建议在 Windows 实机上安装冒烟一次。
 - 只做了 macOS 与 Windows 打包配置，Linux 未验证。
 - 单部作品没有做分卷式的数据库索引，超大项目（>100 万字）打开会略慢（整文件读入内存）。
 - 版本快照是「每章 20 个整章副本」，不吃内存但会占磁盘，超大项目可在章节历史里手动清空。
