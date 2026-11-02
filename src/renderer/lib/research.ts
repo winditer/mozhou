@@ -7,7 +7,7 @@
  */
 import type { ResearchMeta, SearchErrorKind, SearchHit, SearchRunResult } from '@shared/types'
 
-export type QueryReason = 'fact' | 'creative' | 'fiction-system' | 'no-entity'
+export type QueryReason = 'fact' | 'general' | 'creative' | 'fiction-system' | 'no-entity'
 
 export interface QueryPlan {
   queries: string[]
@@ -32,14 +32,30 @@ function clean(question: string): string {
   return question.replace(NOISE, ' ').replace(/\s+/g, ' ').trim()
 }
 
-export function buildQueries(question: string, maxQueries: number): QueryPlan {
+export function buildQueries(
+  question: string,
+  maxQueries: number,
+  opts?: { general?: boolean }
+): QueryPlan {
   const q = question.trim()
   const isFact = FACT_HINT.test(q)
+  // 创作指令到哪儿都不该查：检索的结果只会把别人的桥段塞进来
   if (CREATIVE_ONLY.test(q) && !isFact) return { queries: [], reason: 'creative' }
-  if (FICTION_SYSTEM.test(q) && !isFact) return { queries: [], reason: 'fiction-system' }
-  if (!isFact) return { queries: [], reason: 'no-entity' }
+  /*
+   * 通用模式（对话里开了「通用」）只跳创作指令。
+   *
+   * FACT_HINT 是一张窄词表，服务的是「这本书里要不要查」——它认不出「今天有什么热榜」
+   * 「2026 年诺贝尔文学奖是谁」这类问题，于是作者明明开了通用、也配了搜索源，
+   * 这一轮却根本没发请求，模型只能说「我没联网」。通用模式的意思就是「去外面查」，
+   * 所以这里不再拿词表判它该不该查。
+   */
+  if (!opts?.general) {
+    if (FICTION_SYSTEM.test(q) && !isFact) return { queries: [], reason: 'fiction-system' }
+    if (!isFact) return { queries: [], reason: 'no-entity' }
+  }
 
-  const core = clean(q).slice(0, 30)
+  // 通用模式的查询词就用问题本身（去掉语气词），不再要求命中那张窄词表
+  const core = (clean(q) || q).slice(0, opts?.general ? 60 : 30)
   if (core.length < 2) return { queries: [], reason: 'no-entity' }
 
   const queries = [core]
@@ -55,7 +71,7 @@ export function buildQueries(question: string, maxQueries: number): QueryPlan {
       if (!queries.includes(p)) queries.push(p)
     }
   }
-  return { queries: queries.slice(0, Math.max(1, maxQueries)), reason: 'fact' }
+  return { queries: queries.slice(0, Math.max(1, maxQueries)), reason: opts?.general ? 'general' : 'fact' }
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0')
@@ -94,6 +110,8 @@ export function formatExternal(r: ExternalInput): string {
 }
 
 export interface ResearchDeps {
+  /** 通用模式：不按「像不像事实问题」跳过检索，只跳纯创作指令 */
+  general?: boolean
   channelId: string
   maxResults: number
   maxQueries: number
@@ -107,6 +125,13 @@ export interface ResearchOutcome {
   text: string
   /** 没联网时文本为空，上层据此决定要不要显示「已检索」 */
   skipped: boolean
+  /** 为什么跳过：上层据此给作者一句准确的话，而不是笼统说「没联网」 */
+  skipReason?: QueryReason
+  /**
+   * 真的发了请求但没拿到结果。必须让作者看见——只把降级块塞给模型的话，
+   * 界面上一切正常，作者只会以为「这个 AI 不会联网」。
+   */
+  error?: { kind: SearchErrorKind; message: string }
 }
 
 /**
@@ -130,8 +155,8 @@ async function applySummary(
 }
 
 export async function research(question: string, deps: ResearchDeps): Promise<ResearchOutcome> {
-  const plan = buildQueries(question, deps.maxQueries)
-  if (!plan.queries.length) return { meta: null, text: '', skipped: true }
+  const plan = buildQueries(question, deps.maxQueries, { general: deps.general })
+  if (!plan.queries.length) return { meta: null, text: '', skipped: true, skipReason: plan.reason }
 
   let res: SearchRunResult
   try {
@@ -159,6 +184,7 @@ export async function research(question: string, deps: ResearchDeps): Promise<Re
   return {
     meta,
     text: formatExternal({ hits, queries: res.queries, at, cached: res.cached, error: res.error }),
-    skipped: false
+    skipped: false,
+    error: res.error
   }
 }

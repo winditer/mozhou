@@ -197,6 +197,8 @@ export function AIPanel({
         setStage('正在联网检索…')
         try {
           const outcome = await research(q, {
+            // 通用模式：只跳纯创作指令，不再用那张窄词表判「该不该查」
+            general,
             channelId: webSearch.channelId,
             maxResults: webSearch.maxResults,
             maxQueries: webSearch.maxQueries,
@@ -225,10 +227,20 @@ export function AIPanel({
           })
           external = outcome.text
           researchMeta = outcome.meta
-          // 这一轮没查（纯创作指令或虚构体系）：说出来。
-          // 不说的话作者只看到「联网·开」却没有任何来源，会以为检索静默坏了。
+          /*
+           * 没查成要分两种说清楚，否则作者只会怀疑「这个 AI 不会联网」：
+           * 一种是主动跳过（创作指令 / 本书模式下的虚构体系），一种是真发了请求但失败。
+           */
           if (outcome.skipped) {
-            toast('这一轮没有联网：判断为创作指令或虚构设定，查到的反而是别人小说里的东西。', 'ok')
+            toast(
+              outcome.skipReason === 'creative'
+                ? '这一轮没有联网：这是创作指令，外部资料帮不上忙。'
+                : '这一轮没有联网：书稿里已有的设定不需要查外部资料（切到「通用」才会查）。',
+              'ok'
+            )
+          }
+          if (outcome.error) {
+            toast(`联网检索没成功：${outcome.error.message}`, 'error')
           }
         } catch {
           /* 检索整体失败：按未联网处理，下面照常生成 */

@@ -158,5 +158,37 @@ const emptyRes = await research('明代锦衣卫的品级', {
 })
 check('空结果带上人话原因', emptyRes.text.includes('没有搜到相关结果'))
 
+console.log('通用模式：不靠窄词表判该不该查')
+check('通用模式认「今天有什么热榜」', buildQueries('今天有什么热榜', 2, { general: true }).queries.length > 0, JSON.stringify(buildQueries('今天有什么热榜', 2, { general: true })))
+check('通用模式认「诺贝尔文学奖是谁」', buildQueries('2026 年诺贝尔文学奖是谁', 2, { general: true }).queries.length > 0)
+check('通用模式 reason=general', buildQueries('今天科技圈有什么新闻', 2, { general: true }).reason === 'general')
+check('通用模式仍然跳过创作指令', buildQueries('帮我写一段雪景', 2, { general: true }).queries.length === 0)
+check('通用模式跳过创作指令时 reason=creative', buildQueries('帮我写一段雪景', 2, { general: true }).reason === 'creative')
+check('通用模式允许查虚构体系的通用知识', buildQueries('修仙体系的境界划分有哪些', 2, { general: true }).queries.length > 0)
+check('本书模式仍不认「今天有什么热榜」', buildQueries('今天有什么热榜', 2).queries.length === 0)
+check('本书模式仍跳过虚构体系', buildQueries('修仙小说的境界体系一般怎么排', 2).queries.length === 0)
+
+const genRes = await research('今天有什么热榜', {
+  general: true,
+  channelId: 'c',
+  maxResults: 5,
+  maxQueries: 2,
+  run: async (req) => ({ hits: [{ title: 'T', url: 'https://e.com/1', snippet: 'S', source: 'e.com' }], queries: req.queries, cached: false })
+})
+check('通用模式真的发起了检索', genRes.meta !== null && genRes.meta.hits.length === 1, JSON.stringify(genRes.meta?.queries))
+
+const genErr = await research('今天有什么热榜', {
+  general: true,
+  channelId: 'c',
+  maxResults: 5,
+  maxQueries: 2,
+  run: async (req) => ({ hits: [], queries: req.queries, cached: false, error: { kind: 'auth', message: 'API Key 无效或已过期' } })
+})
+check('检索失败时 outcome 带 error（界面要据此提醒）', Boolean(genErr.error) && genErr.error.kind === 'auth', JSON.stringify(genErr.error))
+check('检索失败时降级块仍给模型', genErr.text.includes('未取得外部资料'))
+
+const genSkip = await research('帮我写一段打斗', { general: true, channelId: 'c', maxResults: 5, maxQueries: 2, run: async (req) => ({ hits: [], queries: req.queries, cached: false }) })
+check('通用模式跳过创作指令时带 skipReason', genSkip.skipped && genSkip.skipReason === 'creative', JSON.stringify(genSkip.skipReason))
+
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)
