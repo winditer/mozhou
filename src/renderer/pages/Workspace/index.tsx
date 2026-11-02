@@ -22,7 +22,7 @@ import { AuditTab } from './AuditTab'
 import { RecitalTab } from './recital/RecitalTab'
 import { MarginGutter } from './audit/MarginGutter'
 import { Button, Progress } from '../../components/ui'
-import { BarChart3, Download, FileSearch, Fingerprint, Info, Lightbulb, ListTree, Maximize2, MessageSquareQuote, Mic, PenLine, Search, Sparkles, Stethoscope, Users, Wand2 } from 'lucide-react'
+import { BarChart3, Download, FileSearch, Fingerprint, Info, Lightbulb, ListTree, Maximize2, MessageSquareQuote, Mic, PenLine, Sparkles, Stethoscope, Users, Wand2 } from 'lucide-react'
 import { ProjectInfoModal } from '../../components/ProjectInfoModal'
 import { generateDraft, generateSelection, generateSummary, textToParagraphHtml } from '../../lib/generate'
 import { DE_AI_INSTRUCTION, summarizeProof } from '../../lib/textcraft'
@@ -205,38 +205,56 @@ export function Workspace(): ReactNode {
   /**
    * 跳到某条搜索结果。
    *
-   * 跨章时要先切章，等编辑器把内容换过来再定位——直接设光标会被
-   * BookEditor 里「换章同步内容」的 effect 覆盖掉。所以这里用一次
-   * requestAnimationFrame 兜住那一帧。
+   * 跨章时要先切章，等编辑器把内容真正换过来再定位——直接设光标会被
+   * BookEditor 里「换章同步内容」的 effect 覆盖掉。
+   *
+   * 以前这里用 `requestAnimationFrame` 兜两帧，冷启动时两帧内 React 还没提交完
+   * setContent，算出来的偏移是**上一章**正文里的位置：选区落在旧文上，紧接着又被
+   * 新内容冲掉，表现成「点了没反应」（自动化验收里时好时坏就是这个）。
+   * 现在改成把「要跳到哪」挂成 pending，等本章内容确实落到编辑器上再落选区——
+   * 与上面 pendingReveal 同一套写法：子组件的 effect 先于父组件执行，
+   * 所以父组件这一帧看到的编辑器已经是新章了。
    */
-  const jumpToHit = useCallback(
+  const [pendingJump, setPendingJump] = useState<SearchHit | null>(null)
+
+  const applyJump = useCallback(
     (hit: SearchHit) => {
-      const go = (): void => {
-        const ed = editorRef.current
-        if (!ed) return
-        const blocks = collectBlocks(ed.state.doc)
-        const pos = plainOffsetToPos(blocks, hit.start)
-        if (pos < 0) {
-          toast('这一处已经不在原文里了（可能刚改过）', 'error')
-          return
-        }
-        const end = plainOffsetToPos(blocks, hit.end)
-        ed.chain()
-          .focus()
-          .setTextSelection({ from: pos, to: end > pos ? end : pos })
-          .scrollIntoView()
-          .run()
+      const ed = editorRef.current
+      if (!ed) return
+      const blocks = collectBlocks(ed.state.doc)
+      const pos = plainOffsetToPos(blocks, hit.start)
+      if (pos < 0) {
+        toast('这一处已经不在原文里了（可能刚改过）', 'error')
+        return
       }
-      const st = useApp.getState()
-      if (hit.chapterId !== st.activeChapterId) {
-        st.setActiveChapter(hit.chapterId)
-        requestAnimationFrame(() => requestAnimationFrame(go))
-      } else {
-        go()
-      }
+      const end = plainOffsetToPos(blocks, hit.end)
+      ed.chain()
+        .focus()
+        .setTextSelection({ from: pos, to: end > pos ? end : pos })
+        .scrollIntoView()
+        .run()
     },
     [toast]
   )
+
+  const jumpToHit = useCallback(
+    (hit: SearchHit) => {
+      if (hit.chapterId !== useApp.getState().activeChapterId) {
+        useApp.getState().setActiveChapter(hit.chapterId)
+        setPendingJump(hit)
+        return
+      }
+      applyJump(hit)
+    },
+    [applyJump]
+  )
+
+  useEffect(() => {
+    if (!pendingJump) return
+    if (chapter?.id !== pendingJump.chapterId) return
+    setPendingJump(null)
+    applyJump(pendingJump)
+  }, [pendingJump, chapter?.id, applyJump])
 
   if (!project) {
     return (
@@ -533,20 +551,8 @@ export function Workspace(): ReactNode {
                 {genre ? ` · ${genre.name}` : ''}
               </span>
               <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto overflow-y-hidden scroll-thin">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setSearchOpen(!searchOpen)
-                    if (!searchOpen) {
-                      setProofOpen(false)
-                      setMarginOpen(false)
-                    }
-                  }}
-                  title="搜索正文 ⌘F（本章 / 全书）"
-                >
-                  <Search size={13} /> 搜索
-                </Button>
+                {/* 搜索入口只留 ⌘F / Ctrl+F（见上面的 keydown 处理）：顶栏按钮太多，
+                    搜索是高频到可以只记快捷键的操作，按钮放在这里反而挤掉真正要用的按钮 */}
                 <Button
                   size="sm"
                   variant="ghost"
@@ -580,9 +586,6 @@ export function Workspace(): ReactNode {
                   title="旁批：AI 以编辑视角挂在这一章每段旁边的意见，只批注不改稿"
                 >
                   <MessageSquareQuote size={13} /> 旁批{marginCount > 0 ? ` ${marginCount}` : ''}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => startSummary()} title="用 AI 生成本章梗概">
-                  本章梗概
                 </Button>
                 <Button size="sm" variant="ghost" disabled={!sel} onClick={() => startSelection('润色这段文字，保持原意与信息量，提升可读性与画面感。', '润色')}>
                   润色
@@ -755,8 +758,15 @@ export function Workspace(): ReactNode {
         </div>
       )}
 
+      {/*
+        搜索面板开着时把 AI 面板让开：搜索栏 320 + AI 栏 372，正文会被挤掉一半以上。
+        这里只「藏起来」不「关掉」——AI 的对话记录、正在流的回复、输入框里的半句话都还在，
+        关掉搜索就自己回来；⌘J 的状态也不会被偷偷改掉。
+      */}
       {tab === 'write' && aiPanelOpen && !focusMode && (
-        <AIPanel project={project} chapter={chapter} onInsertText={(t) => insertHtml(t, 'cursor')} />
+        <div className="shrink-0 h-full" style={{ display: searchOpen ? 'none' : undefined }}>
+          <AIPanel project={project} chapter={chapter} onInsertText={(t) => insertHtml(t, 'cursor')} />
+        </div>
       )}
 
       {/* 沉浸模式：AI 面板浮在右上，不占正文宽度 */}

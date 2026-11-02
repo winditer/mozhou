@@ -49,6 +49,37 @@ export function App(): ReactNode {
       setView: (v: string) => useApp.getState().setView(v as never),
       setTab: (t: string) => useApp.getState().setTab(t as never),
       state: () => useApp.getState(),
+      /** 按文字点按钮：写作页把搜索入口收成快捷键以后，验收脚本不能再靠按钮文字开面板 */
+      clickByText: (text: string): boolean => {
+        const want = text.replace(/\s+/g, '')
+        const hit = [...document.querySelectorAll<HTMLElement>('button, [role="button"], a')].find(
+          (el) => (el.textContent ?? '').replace(/\s+/g, '').includes(want)
+        )
+        if (!hit) return false
+        hit.click()
+        return true
+      },
+      /** 给受控 input 赋值：必须走原型上的 value setter，否则 React 收不到这次改动 */
+      typeInto: (selector: string, value: string): boolean => {
+        const el = document.querySelector(selector) as HTMLInputElement | null
+        if (!el) return false
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        setter?.call(el, value)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+        return true
+      },
+      /** 派发一次快捷键。meta 与 ctrl 同时给，mac / Windows 的处理分支都能走到 */
+      press: (key: string, mods?: { shift?: boolean }): boolean =>
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key,
+            metaKey: true,
+            ctrlKey: true,
+            shiftKey: mods?.shift ?? false,
+            bubbles: true,
+            cancelable: true
+          })
+        )
     }
   }, [])
 

@@ -8,6 +8,9 @@
  *
  * 两者都要跑：逻辑对但接线错，纯逻辑测试是发现不了的——
  * 之前校读的「采用建议」点了没反应就是这种情况。
+ *
+ * 注意：写作页顶栏的搜索按钮已经去掉，入口只剩 ⌘F / Ctrl+F，
+ * 所以脚本用 __MZ.press('f') 派发快捷键来开面板（顺便验证快捷键没坏）。
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
@@ -65,7 +68,7 @@ console.log('本章搜索')
       __MZ.state().setActiveChapter('ch_2')
       return ${wait(900)}
     }).then(()=>{
-      __MZ.clickByText('搜索')
+      __MZ.press('f')
       return ${wait(700)}
     }).then(()=>{
       __MZ.typeInto('[data-mz-search] input:not([type])','槐树')
@@ -86,7 +89,7 @@ console.log('全书搜索')
   const r = shot(
     'book',
     `(__MZ.openProject('p_demo'), ${wait(1200)}.then(()=>{
-      __MZ.clickByText('搜索')
+      __MZ.press('f')
       return ${wait(700)}
     }).then(()=>{
       __MZ.typeInto('[data-mz-search] input:not([type])','老槐树')
@@ -107,7 +110,7 @@ console.log('跨章跳转定位')
   const r = shot(
     'jump',
     `(__MZ.openProject('p_demo'), ${wait(1200)}.then(()=>{
-      __MZ.clickByText('搜索')
+      __MZ.press('f')
       return ${wait(700)}
     }).then(()=>{
       __MZ.typeInto('[data-mz-search] input:not([type])','老槐树')
@@ -136,7 +139,7 @@ console.log('空结果提示')
   const r = shot(
     'empty',
     `(__MZ.openProject('p_demo'), ${wait(1200)}.then(()=>{
-      __MZ.clickByText('搜索')
+      __MZ.press('f')
       return ${wait(700)}
     }).then(()=>{
       __MZ.typeInto('[data-mz-search] input:not([type])','不存在的词汇zzz')

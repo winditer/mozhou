@@ -35,6 +35,8 @@ export function ChapterList({
       <div className="flex-1 min-h-0 overflow-auto scroll-thin py-1.5">
         {project.chapters.map((c, i) => {
           const active = c.id === activeChapterId
+          // 梗概同时存在 chapter.summary 和 project.summaries 快照里，读哪边都可能只有一半
+          const summary = (project.summaries[c.id] || c.summary || '').trim()
           return (
             <div
               key={c.id}
@@ -80,6 +82,22 @@ export function ChapterList({
                     {c.title || '未命名'}
                   </span>
                 )}
+                {/*
+                  本章梗概：以前这里是列表里独占一行的梗概文字，长梗概会把章节项撑得很高，
+                  而且大多数时候作者并不需要读到全文。收成历史版本按钮左边的图标，
+                  有梗概时高亮，没有时悬停才出现，鼠标停上去用 tooltip 看全文。
+                */}
+                <button
+                  className={'shrink-0 ' + (summary ? '' : 'opacity-0 group-hover:opacity-100')}
+                  style={{ color: summary ? 'var(--accent)' : 'var(--text-faint)' }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onEditSummary(c.id)
+                  }}
+                  title={summary ? `本章梗概：${summary}\n\n点击编辑` : '本章还没有梗概，点击添加'}
+                >
+                  <NotebookPen size={11} />
+                </button>
                 {c.versions?.length ? (
                   <button
                     className="shrink-0"
@@ -125,29 +143,6 @@ export function ChapterList({
                   {CHAPTER_STATUS_LABEL[c.status]}
                 </button>
               </div>
-              {(() => {
-                const sm = (project.summaries[c.id] || c.summary || '').trim()
-                return (
-                  <button
-                    className={
-                      'mt-0.5 flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[10.5px] ' +
-                      (sm ? '' : 'opacity-0 group-hover:opacity-100')
-                    }
-                    style={{
-                      color: sm ? 'var(--text-dim)' : 'var(--text-faint)',
-                      opacity: sm || active ? 1 : undefined
-                    }}
-                    title={sm ? `梗概：${sm}\n\n点击编辑` : '本章还没有梗概，点击添加'}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onEditSummary(c.id)
-                    }}
-                  >
-                    <NotebookPen size={10} className="shrink-0" />
-                    <span className="min-w-0 truncate">{sm ? sm.replace(/\n/g, ' ') : '加梗概'}</span>
-                  </button>
-                )
-              })()}
             </div>
           )
         })}
