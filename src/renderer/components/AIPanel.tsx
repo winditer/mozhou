@@ -156,8 +156,11 @@ export function AIPanel({
   const resolved = resolveTaskModel(config, project, 'chat')
   const elapsed = useElapsed(streaming)
   const webSearch = config?.settings.webSearch
-  // 本轮是否联网：作者每次发送前显式决定，不做自动判断
-  const [withSearch, setWithSearch] = useState(false)
+  /*
+   * 通用模式：不注入【作品资料】、身份换成通用问答助手，配置了搜索源时还会先联网查。
+   * 作者每次发送前显式决定，不做自动判断——判断错了比按钮多一步更让人恼火。
+   */
+  const [general, setGeneral] = useState(false)
   const [searching, setSearching] = useState('')
   const searchReady = Boolean(webSearch?.enabled && webSearch.channelId)
 
@@ -189,7 +192,7 @@ export function AIPanel({
        */
       let external = ''
       let researchMeta: ResearchMeta | null = null
-      if (withSearch && webSearch?.channelId) {
+      if (general && webSearch?.channelId) {
         setSearching('正在查资料…')
         setStage('正在联网检索…')
         try {
@@ -247,6 +250,7 @@ export function AIPanel({
         history,
         question: q,
         allowEdits,
+        general,
         external,
         library: useApp.getState().styleLibrary,
         skillLibrary: useApp.getState().skillLibrary,
@@ -259,7 +263,7 @@ export function AIPanel({
         onStage: (s) => setStage(s)
       })
       const raw = (r.text || acc).trim()
-      const parsed = allowEdits ? parseEditBlock(raw) : { text: raw, ops: [], errors: [] }
+      const parsed = allowEdits && !general ? parseEditBlock(raw) : { text: raw, ops: [], errors: [] }
       const final = (parsed.text || (parsed.ops.length ? '（这一轮只给了改动，没有文字说明）' : '')).trim()
       if (!final) {
         // 一个字都没写：别往对话里塞一个空气泡，那看起来就像「AI 中断了」
@@ -557,43 +561,50 @@ export function AIPanel({
                 </span>
                 <button
                   className="chip surface-hover"
-                  style={{ height: 18, padding: '0 6px', fontSize: 10, color: allowEdits ? 'var(--accent)' : 'var(--text-faint)' }}
+                  style={{
+                    height: 18,
+                    padding: '0 6px',
+                    fontSize: 10,
+                    // 通用模式下这一项没有意义（看不到书稿就没得改），置灰而不是消失——
+                    // 消失会让人以为「这个设置被丢了」，置灰只是「这一轮用不上」。
+                    color: general || !allowEdits ? 'var(--text-faint)' : 'var(--accent)',
+                    opacity: general ? 0.45 : 1,
+                    cursor: general ? 'not-allowed' : undefined
+                  }}
                   title={
-                    allowEdits
-                      ? '现在允许 AI 在回答里附上可直接应用的改动（会先给你看 diff 才落地）。点一下改成只聊天。'
-                      : '现在只聊天，不会提出改动。点一下允许 AI 附上可直接应用的改动。'
+                    general
+                      ? '通用模式不注入本书资料，所以这一轮只能聊天、不能给改动。关掉「通用」即可恢复。'
+                      : allowEdits
+                        ? '现在允许 AI 在回答里附上可直接应用的改动（会先给你看 diff 才落地）。点一下改成只聊天。'
+                        : '现在只聊天，不会提出改动。点一下允许 AI 附上可直接应用的改动。'
                   }
-                  onClick={() => void patchSettings({ allowChatEdits: !allowEdits })}
-                >
-                  {allowEdits ? '可改稿' : '只聊天'}
-                </button>
-                {webSearch?.enabled && (
-                  <button
-                    className="chip surface-hover"
-                    style={{
-                      height: 18,
-                      padding: '0 6px',
-                      fontSize: 10,
-                      color: !searchReady ? 'var(--text-faint)' : withSearch ? 'var(--accent)' : 'var(--text-dim)'
-                    }}
-                    title={
-                      !searchReady
-                        ? '还没有配置搜索源，去「设置 → 联网搜索」里加一个'
-                        : withSearch
-                          ? '这一轮会先联网查资料再回答（消耗搜索额度）。点一下关掉。'
-                          : '这一轮先联网查资料再回答，事实类问题（史料、工艺、参数）建议打开。'
+                  onClick={() => {
+                    if (general) {
+                      toast('通用模式下不看书稿，改不了稿；先点掉「通用」回到本书模式。', 'ok')
+                      return
                     }
-                    onClick={() => {
-                      if (!searchReady) {
-                        toast('还没有配置搜索源，请到「设置 → 联网搜索」里添加', 'error')
-                        return
-                      }
-                      setWithSearch((v) => !v)
-                    }}
-                  >
-                    {searching || (withSearch ? '联网·开' : '联网')}
-                  </button>
-                )}
+                    void patchSettings({ allowChatEdits: !allowEdits })
+                  }}
+                >
+                  {general ? '只聊天' : allowEdits ? '可改稿' : '只聊天'}
+                </button>
+                <button
+                  className="chip surface-hover"
+                  style={{
+                    height: 18,
+                    padding: '0 6px',
+                    fontSize: 10,
+                    color: general ? 'var(--accent)' : 'var(--text-faint)'
+                  }}
+                  title={
+                    general
+                      ? `通用模式：不看这本书，用通用知识回答${searchReady ? '，并会先联网查资料（消耗额度）' : ''}。点一下回到本书模式。`
+                      : `点一下开启通用模式：不注入本书资料，改成通用问答助手${searchReady ? '，并先联网查资料' : '（还没配搜索源，就没有联网这一步）'}。`
+                  }
+                  onClick={() => setGeneral((v) => !v)}
+                >
+                  {searching || (general ? '通用·开' : '通用')}
+                </button>
               </div>
               {streaming ? (
                 <Button size="sm" onClick={() => abortChat()}>
@@ -608,7 +619,7 @@ export function AIPanel({
           </div>
         </>
       ) : (
-        <ContextView project={project} chapter={chapter} />
+        <ContextView project={project} chapter={chapter} general={general} />
       )}
 
       <ChatEditPreview
@@ -639,7 +650,16 @@ export function AIPanel({
   )
 }
 
-function ContextView({ project, chapter }: { project: Project; chapter: Chapter | null }): ReactNode {
+function ContextView({
+  project,
+  chapter,
+  general = false
+}: {
+  project: Project
+  chapter: Chapter | null
+  /** 通用模式下这些资料都不会被注入，需要在预览里明说，否则作者会以为对话带上了它们 */
+  general?: boolean
+}): ReactNode {
   const { patchProject } = useApp()
   const conventions = useApp((s) => s.config?.settings.genreConventions)
   const skillLibrary = useApp((s) => s.skillLibrary)
@@ -660,6 +680,15 @@ function ContextView({ project, chapter }: { project: Project; chapter: Chapter 
 
   return (
     <div className="flex-1 min-h-0 overflow-auto scroll-thin px-3 py-3">
+      {general && (
+        <div
+          className="mb-3 rounded-lg px-2.5 py-2 text-[11px] leading-relaxed"
+          style={{ background: 'var(--accent-soft)', color: 'var(--text-dim)', border: '1px solid var(--border)' }}
+        >
+          这一轮是<strong style={{ color: 'var(--accent)' }}>通用模式</strong>：下面这些作品资料都不会被注入，
+          回答只看通用知识和联网结果。点掉输入框下方的「通用·开」即回到本书模式。
+        </div>
+      )}
       <div className="text-[11.5px] leading-relaxed mb-3" style={{ color: 'var(--text-faint)' }}>
         每次生成时，墨舟会把下面这些资料按顺序装进提示词（对话时额外带上当前章节正文）。总预算约 {ctx.budget.toLocaleString()} tokens，
         当前约 <strong style={{ color: 'var(--text)' }}>{ctx.totalTokens.toLocaleString()}</strong> tokens

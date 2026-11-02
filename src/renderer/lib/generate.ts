@@ -483,13 +483,41 @@ export function buildChatMessages(p: {
   external?: string
 }): PromptMessage[] {
   const external = p.external?.trim()
+  const ctx = p.contextText.trim()
   return [
     { role: 'system', content: p.system },
-    { role: 'user', content: `【作品资料】\n${p.contextText}` },
+    // 通用模式不注入作品资料：整块不发，而不是发一个空的【作品资料】——
+    // 空块会让模型以为「这本书没内容」，进而反问作者要设定。
+    ...(ctx ? [{ role: 'user' as const, content: `【作品资料】\n${ctx}` }] : []),
     ...(external ? [{ role: 'user' as const, content: external }] : []),
     ...p.history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: p.question }
   ]
+}
+
+/** 通用模式的身份：不绑定本书，也不主动引申回写作 */
+export const GENERAL_CHAT_SYSTEM = `你是一个严谨的通用问答助手。用中文直接回答：先给结论，再给必要的细节与限定条件。
+没有把握的地方要明说，不确定的数字、年代、人名、出处宁可不写，也不要编。
+作者没有在讨论他的小说，所以不要主动引申到写作、章节安排或剧情上；他问什么就答什么。`
+
+/**
+ * 这一轮的系统提示词。
+ *
+ * 抽成纯函数是为了能在 node 里断言「通用模式不带书稿口径、也不带改稿协议」——
+ * 这两条一旦回退，作者只会看到模型又开始把话题扯回小说，很难判断是哪一环出的问题。
+ */
+export function chatSystemFor(p: {
+  general?: boolean
+  allowEdits?: boolean
+  /** 本书口径的系统提示词（buildSystemPrompt 的结果） */
+  bookPrompt: string
+  skillHint?: string
+  chapterTitle?: string
+}): string {
+  if (p.general) return GENERAL_CHAT_SYSTEM
+  const skill = p.skillHint ? `\n\n${p.skillHint}` : ''
+  const edit = p.allowEdits ? `\n\n${renderEditPrompt(p.chapterTitle)}` : ''
+  return `${p.bookPrompt}${skill}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。${edit}`
 }
 
 export async function generateChatReply(
@@ -501,6 +529,11 @@ export async function generateChatReply(
     /** 是否允许这一轮提出可直接应用的改动（mz-edit）。关掉就是纯聊天 */
     allowEdits?: boolean
     /**
+     * 通用模式（对话面板的「通用」开关）：不注入【作品资料】、身份换成通用问答助手。
+     * 关掉时装配结果与改造前逐字一致，由 scripts/test-chat-external.mjs 钉死。
+     */
+    general?: boolean
+    /**
      * 本轮检索到的【外部资料】块（见 lib/research.ts 的 formatExternal）。
      * 不传 = 不联网，装配结果与改造前逐字一致。
      */
@@ -508,20 +541,33 @@ export async function generateChatReply(
   }
 ): Promise<ChatReply> {
   const budgets = p.budgets ?? DEFAULT_TOKEN_BUDGETS
-  // 对话时必须能看到「当前这一章」的正文，否则模型只会拿到前文/设定
-  const ctx = assembleContext(p.project, p.chapter, 20000, {
-    includeCurrent: true,
-    conventions: p.conventions
-  })
+  /*
+   * 通用模式：一句书稿都不给。
+   * 之前无论问什么都塞两万 token 的作品资料，模型于是把所有问题都往「这对你这本书意味着什么」
+   * 上带——问「明朝哪年建立」也会附一段第 3 章建议。作者要的是通用问答，这里就不该出现本书。
+   */
+  const ctx = p.general
+    ? null
+    : assembleContext(p.project, p.chapter, 20000, {
+        includeCurrent: true,
+        conventions: p.conventions
+      })
   // 对话不注入技法卡的完整规则：那是执行模式，塞进讨论场景模型会开始逐条讲解
   // 自己的改稿而不是回答问题。只给「本书挂了哪几张卡」，够它接住「按黄金三章的思路聊」。
-  const skillHint = renderSkillsForChat(p.project.settings.activeSkillIds, p.skillLibrary ?? null, skillContext(p.project))
+  // 通用模式下技法卡、文风分身都不给：它们全都指向这本书。
+  const skillHint = p.general
+    ? ''
+    : renderSkillsForChat(p.project.settings.activeSkillIds, p.skillLibrary ?? null, skillContext(p.project))
   // 改稿协议放在最后：它是行为约束，紧贴用户消息之前最容易被遵守
-  const editHint = p.allowEdits
-    ? `\n\n${renderEditPrompt(p.chapter?.title || undefined)}`
-    : ''
-  const system = `${buildSystemPrompt(p.project, 'prose', p.library, p.conventions)}${skillHint ? `\n\n${skillHint}` : ''}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。${editHint}`
-  const ctxText = contextToText(ctx)
+  // 通用模式看不到书稿，给改稿协议只会让它凭想象改，chatSystemFor 里一并关掉。
+  const system = chatSystemFor({
+    general: p.general,
+    allowEdits: p.allowEdits,
+    bookPrompt: p.general ? '' : buildSystemPrompt(p.project, 'prose', p.library, p.conventions),
+    skillHint,
+    chapterTitle: p.chapter?.title || undefined
+  })
+  const ctxText = ctx ? contextToText(ctx) : ''
   const messages = buildChatMessages({
     system,
     contextText: ctxText,

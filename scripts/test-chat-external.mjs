@@ -27,7 +27,7 @@ await build({
   logLevel: 'silent',
   alias: { '@shared': join(root, 'src/shared') }
 })
-const { buildChatMessages } = await import(pathToFileURL(outfile).href)
+const { buildChatMessages, chatSystemFor, GENERAL_CHAT_SYSTEM } = await import(pathToFileURL(outfile).href)
 
 let pass = 0
 let fail = 0
@@ -68,6 +68,31 @@ check('空白 external 视同没有', JSON.stringify(blank) === JSON.stringify(p
 
 const empty = buildChatMessages({ ...base, external: '' })
 check('空串 external 视同没有', JSON.stringify(empty) === JSON.stringify(plain))
+
+console.log('通用模式（不注入作品资料、身份换掉）')
+const genMsgs = buildChatMessages({
+  system: chatSystemFor({ general: true, allowEdits: true, bookPrompt: '本书口径' }),
+  contextText: '',
+  history: [],
+  question: '明朝是什么时候建立的'
+})
+check('通用模式不发【作品资料】整块', !JSON.stringify(genMsgs).includes('【作品资料】'), JSON.stringify(genMsgs.map((m) => m.role)))
+check('通用模式只剩 system + 提问', genMsgs.length === 2 && genMsgs[0].role === 'system' && genMsgs[1].role === 'user', String(genMsgs.length))
+check('通用模式身份是通用问答助手', genMsgs[0].content.includes('通用问答助手'), genMsgs[0].content.slice(0, 20))
+check('通用模式不带「写作搭档」口径', !genMsgs[0].content.includes('写作搭档'))
+check('通用模式不带改稿协议（看不到书稿就别改）', !genMsgs[0].content.includes('mz-edit'))
+check('通用模式提示词就是常量本身', chatSystemFor({ general: true, allowEdits: true, bookPrompt: 'X' }) === GENERAL_CHAT_SYSTEM)
+
+const bookMsgs = buildChatMessages({
+  system: chatSystemFor({ allowEdits: true, bookPrompt: '本书口径', chapterTitle: '第 1 章' }),
+  contextText: '角色：周砚秋',
+  history: [],
+  question: '这段怎么写更好'
+})
+check('本书模式仍发【作品资料】', JSON.stringify(bookMsgs).includes('【作品资料】'))
+check('本书模式仍带「写作搭档」', bookMsgs[0].content.includes('写作搭档'))
+check('本书模式仍带改稿协议', bookMsgs[0].content.includes('mz-edit'))
+check('本书模式仍拼上书稿口径', bookMsgs[0].content.includes('本书口径'))
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)
