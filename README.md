@@ -37,6 +37,11 @@
 - **搜索源自己配**。设置新增「联网搜索」：内置博查 Bocha、智谱、Tavily、Serper、SearXNG 预设，也可自填地址与鉴权方式。Key 存本机钥匙串（`search:<channelId>`），渲染进程从头到尾拿不到明文。
 - **省钱的三处**：结果缓存（同一 query 在 TTL 内不重复计费，上限 500 条、空结果不入缓存）、可选「先压缩再注入」（用当前对话模型把结果压成要点）、单次条数 3–8 与查询条数 1–3 都可调。
 - **DeepSeek 搜索可以直接用，Key 还能复用**。DeepSeek 在 2026-10 上线了官方 Search API（`POST /v1/tools/search`，$0.75 / 千次成功请求，空结果与失败不计费），已加为预设并排在第一：既然作者多半本来就在用它写稿，那么**搜索源的 Key 可以留空——自动复用「渠道与模型」里 DeepSeek 渠道的那一把**。只认 hostname 恰好是 `api.deepseek.com`（第三方中转不借，免得拿别人的 token 撞 401），判定放在 `src/shared/webSearch.ts`，界面与主进程共用一份。注入时取它的 `summary`（600–800 字，官方写明是给模型读的）而不是 `snippet`（给界面看），截到 400 字以控预算。
+- **改：写作页顶栏只留真正会点的动作**。去掉「搜索」按钮（入口只剩 ⌘F / Ctrl+F，搜索面板本身不变）和「本章梗概」按钮（改从章节列表的梗概图标进），顶栏不再挤到 AI 面板上。
+- **改：章节列表的梗概收成图标**。原来每章标题下独占一行的梗概摘要把长梗概撑得很高；现在正文下方只留字数与状态，梗概变成**历史版本图标左边**的小图标：有梗概时高亮、悬停可看全文、点开编辑，没梗概时悬停才出现。
+- **修：搜索面板打开时右侧 AI 面板自动让位**。搜索栏 320 + AI 栏 372 会把正文挤掉一半；现在只「藏起来」不「关掉」，对话记录、没发出去的输入、正在流的回复都不受影响，关掉搜索自动回来。
+- **修：搜索结果跨章跳转偶尔「点了没反应」**。原来靠两帧 `requestAnimationFrame` 等编辑器换章，冷启动时 React 还没提交完 `setContent`，偏移算在上一章正文上、选区随即被冲掉。改成挂 pending、等本章内容真正落到编辑器再落选区（与旁批「跳到正文」同一套写法）。
+- **修（Windows）：上下两条操作栏、左右两套窗口按钮**。非 mac 之前用的是 `titleBarStyle: 'default'`，那是完整原生窗口框——系统标题栏（含最小化/最大化/关闭）与系统菜单栏都会画出来，和自绘顶栏叠成两条。现在非 mac 一律 `frame: false`，只剩自绘顶栏这一套；mac 的 `hiddenInset` 与红绿灯位置不变。
 
 ### 1.7.1
 - **修：段落侧批 / 写作页旁批在推理模型下「模型没有返回内容」**。批注请求是严格 JSON，以前走的是「审校」任务模型（常见是 deepseek-reasoner / v4.1-flash），reasoning 会先把 `max_tokens` 吃光，正文空着回来。现在批注请求显式**关闭思考**；非 DeepSeek 渠道不认这个开关时，空稿会**翻倍额度重试一次**；仍为空则明确提示去调「输出预算 → 段落侧批」，不再只给一句「没有返回内容」。写作页旁批栏与体检页共用同一套调用。
@@ -202,8 +207,8 @@ npm run build         # electron-vite build → out/
 ### 打包
 
 ```bash
-npm run dist:mac      # → release/Mozhou-1.7.1-arm64.dmg / -x64.dmg（同时出 zip）
-npm run dist:win      # → release/Mozhou-Setup-1.7.1.exe（electron-builder 26 自带 NSIS，macOS 上也能交叉构建）
+npm run dist:mac      # → release/Mozhou-1.8.0-arm64.dmg / -x64.dmg（同时出 zip）
+npm run dist:win      # → release/Mozhou-Setup-1.8.0.exe（electron-builder 26 自带 NSIS，macOS 上也能交叉构建）
 npm run dist:dir      # 只出未压缩目录，调试打包问题用
 ```
 
@@ -211,15 +216,15 @@ npm run dist:dir      # 只出未压缩目录，调试打包问题用
 
 | 产物 | 说明 |
 |---|---|
-| `release/Mozhou-1.7.1-arm64.dmg` | Apple Silicon 安装镜像（推荐） |
-| `release/Mozhou-1.7.1-x64.dmg` | Intel 安装镜像 |
-| `release/Mozhou-1.7.1-arm64.zip` / `-x64.zip` | 解压得到 `Mozhou.app`，拖进「应用程序」即可 |
-| `release/Mozhou-Setup-1.7.1.exe` | Windows x64 安装包（NSIS，未签名，SmartScreen 会提示一次） |
+| `release/Mozhou-1.8.0-arm64.dmg` | Apple Silicon 安装镜像（推荐） |
+| `release/Mozhou-1.8.0-x64.dmg` | Intel 安装镜像 |
+| `release/Mozhou-1.8.0-arm64.zip` / `-x64.zip` | 解压得到 `Mozhou.app`，拖进「应用程序」即可 |
+| `release/Mozhou-Setup-1.8.0.exe` | Windows x64 安装包（NSIS，未签名，SmartScreen 会提示一次） |
 | `release/mac-arm64/Mozhou.app` | 解包后的 arm64 应用本体 |
 
-构建记录（含 sha256）见 `release/BUILD-1.7.1.md`。
+构建记录（含 sha256）见 `release/BUILD-1.8.0.md`。
 
-> **关于 .dmg**：制作 dmg 要调 `hdiutil` 挂载磁盘镜像。受限沙箱/CI 容器里可能被系统拒绝（`hdiutil create: Operation not permitted`）；1.7.1 是在本机正常权限下构建的，dmg 已随仓库产出。若你的环境拒绝，可用同目录的 `.zip`，或在桌面环境运行 `npm run dist:mac` 重新生成。
+> **关于 .dmg**：制作 dmg 要调 `hdiutil` 挂载磁盘镜像。受限沙箱/CI 容器里可能被系统拒绝（`hdiutil create: Operation not permitted`）；1.8.0 是在本机正常权限下构建的，dmg 已随仓库产出。若你的环境拒绝，可用同目录的 `.zip`，或在桌面环境运行 `npm run dist:mac` 重新生成。
 
 > 首次打包需要下载 Electron 预编译包（约 100 MB），electron-builder 会缓存在 `~/Library/Caches/electron-builder`。国内网络建议先设 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
@@ -325,7 +330,7 @@ docs/
 
 - **未做代码签名 / 公证**（没有 Apple Developer ID）。首次打开需要右键 → 打开；分发给他人在 Gatekeeper 下也会提示一次。
 - 打包产物默认是 `.zip`（`.app` 已打好、可直接运行）。`.dmg` 的生成需要 `hdiutil` 挂载磁盘镜像，在受限沙箱里会被拒绝，请在本机运行 `bash scripts/make-dmg.sh`。
-- Windows 安装包（NSIS）1.7.1 已在 macOS 上交叉构建（electron-builder 26 自带 NSIS）。仍未做 Windows 代码签名，建议在 Windows 实机上安装冒烟一次。
+- Windows 安装包（NSIS）1.8.0 已在 macOS 上交叉构建（electron-builder 26 自带 NSIS）。仍未做 Windows 代码签名，建议在 Windows 实机上安装冒烟一次。
 - 只做了 macOS 与 Windows 打包配置，Linux 未验证。
 - 单部作品没有做分卷式的数据库索引，超大项目（>100 万字）打开会略慢（整文件读入内存）。
 - 版本快照是「每章 20 个整章副本」，不吃内存但会占磁盘，超大项目可在章节历史里手动清空。
