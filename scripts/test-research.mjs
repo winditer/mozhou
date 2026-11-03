@@ -266,5 +266,17 @@ const planCreative = await research('帮我写一段打斗', {
 })
 check('创作指令不请模型规划', planCreative.skipped && planCreative.skipReason === 'creative')
 
+console.log('外部资料块：通用模式与本书模式不同')
+const genHit = { hits: [{ title: 'T', url: 'https://e.com/1', snippet: 'S', source: 'e.com' }], queries: ['q'], at: Date.now(), cached: false }
+const genBlock = formatExternal(genHit, { general: true })
+check('通用模式不再提「本书设定」', !genBlock.includes('本书设定'), genBlock.slice(0, 40))
+check('通用模式明说这是检索结果', genBlock.includes('刚刚为你联网检索'))
+check('通用模式禁止说「我没有联网」', genBlock.includes('不要再说「我没有联网」'))
+check('通用模式要求标编号', genBlock.includes('[编号]'))
+check('通用模式要求忽略无关条目', genBlock.includes('无关的条目直接忽略'))
+const bookBlock = formatExternal(genHit)
+check('本书模式仍保留本书设定优先', bookBlock.includes('以本书设定为准'))
+check('本书模式仍要求标编号', bookBlock.includes('[编号]'))
+
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

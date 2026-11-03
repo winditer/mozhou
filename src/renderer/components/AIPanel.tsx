@@ -295,6 +295,9 @@ export function AIPanel({
         allowEdits,
         general,
         external,
+        // 条数要一路带到 system 提示词：否则通用模式下模型会照着上文里自己的
+        // 「我没有联网」继续往下说，哪怕资料就在同一个请求里
+        externalHits: researchMeta?.hits.length ?? 0,
         library: useApp.getState().styleLibrary,
         skillLibrary: useApp.getState().skillLibrary,
         conventions: useApp.getState().config?.settings.genreConventions,

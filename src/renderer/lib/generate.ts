@@ -472,8 +472,9 @@ export interface ChatReply {
  * 不允许有任何漂移，见 scripts/test-chat-external.mjs），二是「外部资料插在哪」
  * 这件事只该有一处真相。
  *
- * 外部资料紧跟【作品资料】、位于对话历史之前：它和本书资料同属"资料层"，
- * 放在历史之后会变成临时附注，容易被上一轮回答带跑。
+ * 外部资料紧贴提问之前、位于对话历史之后：模型最看重的是最后几条消息，
+ * 放在历史之前时，它读到的是自己上一轮说的「我没有联网」——作者连问几轮之后，
+ * 上文里全是拒绝，模型会顺着这个话说下去，哪怕资料就在同一个请求里。
  */
 export function buildChatMessages(p: {
   system: string
@@ -489,8 +490,8 @@ export function buildChatMessages(p: {
     // 通用模式不注入作品资料：整块不发，而不是发一个空的【作品资料】——
     // 空块会让模型以为「这本书没内容」，进而反问作者要设定。
     ...(ctx ? [{ role: 'user' as const, content: `【作品资料】\n${ctx}` }] : []),
-    ...(external ? [{ role: 'user' as const, content: external }] : []),
     ...p.history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
+    ...(external ? [{ role: 'user' as const, content: external }] : []),
     { role: 'user', content: p.question }
   ]
 }
@@ -506,6 +507,15 @@ export const GENERAL_CHAT_SYSTEM = `你是一个严谨的通用问答助手。�
  * 抽成纯函数是为了能在 node 里断言「通用模式不带书稿口径、也不带改稿协议」——
  * 这两条一旦回退，作者只会看到模型又开始把话题扯回小说，很难判断是哪一环出的问题。
  */
+/** 手上有检索结果时必须说的话。没有这句，模型会照着上文里自己的拒绝继续拒绝。 */
+export const EXTERNAL_READY_HINT = `本轮已经为你做了联网检索，结果就在提问之前那条【外部资料】消息里——那是刚刚查到的真实结果，不是作者提供的、也不是你编的。
+回答必须用它：用到哪条就在句末标 [编号]。
+禁止说「我没有联网」「拿不到实时信息」「你自己去看」这类话——你能看到这些结果。
+资料没覆盖的部分，说明「资料里没有」，并区分哪些来自资料、哪些是你自己的推断。`
+
+/** 检索失败时必须说的话：如实说明，不许假装查过。 */
+export const EXTERNAL_FAILED_HINT = `本轮联网检索没有取得结果。请如实说明，并只凭你自己的知识回答；不确定的地方要讲清楚，不要假装查过，也不要编造来源或 URL。`
+
 export function chatSystemFor(p: {
   general?: boolean
   allowEdits?: boolean
@@ -513,8 +523,15 @@ export function chatSystemFor(p: {
   bookPrompt: string
   skillHint?: string
   chapterTitle?: string
+  /** 本轮检索条数：有 external 时传，0 表示检索失败/空结果 */
+  externalHits?: number
 }): string {
-  if (p.general) return GENERAL_CHAT_SYSTEM
+  if (p.general) {
+    if (typeof p.externalHits === 'number') {
+      return `${GENERAL_CHAT_SYSTEM}\n\n${p.externalHits > 0 ? EXTERNAL_READY_HINT : EXTERNAL_FAILED_HINT}`
+    }
+    return GENERAL_CHAT_SYSTEM
+  }
   const skill = p.skillHint ? `\n\n${p.skillHint}` : ''
   const edit = p.allowEdits ? `\n\n${renderEditPrompt(p.chapterTitle)}` : ''
   return `${p.bookPrompt}${skill}\n\n你现在是作者的写作搭档，正在和作者讨论这本书的写法。回答要具体、可执行，不要泛泛而谈。${edit}`
@@ -533,6 +550,8 @@ export async function generateChatReply(
      * 关掉时装配结果与改造前逐字一致，由 scripts/test-chat-external.mjs 钉死。
      */
     general?: boolean
+    /** 本轮检索到的条数（0 = 检索失败或空结果）。有 external 时要传，系统提示词据此明说「资料在手」 */
+    externalHits?: number
     /**
      * 本轮检索到的【外部资料】块（见 lib/research.ts 的 formatExternal）。
      * 不传 = 不联网，装配结果与改造前逐字一致。
@@ -565,7 +584,8 @@ export async function generateChatReply(
     allowEdits: p.allowEdits,
     bookPrompt: p.general ? '' : buildSystemPrompt(p.project, 'prose', p.library, p.conventions),
     skillHint,
-    chapterTitle: p.chapter?.title || undefined
+    chapterTitle: p.chapter?.title || undefined,
+    externalHits: p.external ? (p.externalHits ?? 0) : undefined
   })
   const ctxText = ctx ? contextToText(ctx) : ''
   const messages = buildChatMessages({

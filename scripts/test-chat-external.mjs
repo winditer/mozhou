@@ -27,7 +27,7 @@ await build({
   logLevel: 'silent',
   alias: { '@shared': join(root, 'src/shared') }
 })
-const { buildChatMessages, chatSystemFor, GENERAL_CHAT_SYSTEM } = await import(pathToFileURL(outfile).href)
+const { buildChatMessages, chatSystemFor, GENERAL_CHAT_SYSTEM, EXTERNAL_READY_HINT, EXTERNAL_FAILED_HINT } = await import(pathToFileURL(outfile).href)
 
 let pass = 0
 let fail = 0
@@ -59,9 +59,10 @@ check('历史只保留最近 8 条', buildChatMessages({ ...base, history: Array
 
 const withExt = buildChatMessages({ ...base, external: '【外部资料】\n[1] x' })
 check('有 external 时多一条', withExt.length === 6, String(withExt.length))
-check('external 紧跟作品资料', withExt[2].content.startsWith('【外部资料】'), JSON.stringify(withExt[2].content))
-check('external 在历史之前', withExt[3].content === '上一问')
-check('external 之后消息未变', JSON.stringify(withExt.slice(3)) === JSON.stringify(plain.slice(2)))
+check('external 紧贴提问之前', withExt[4].content.startsWith('【外部资料】'), JSON.stringify(withExt[4].content))
+check('external 在历史之后', withExt[2].content === '上一问' && withExt[3].role === 'assistant')
+check('提问仍是最后一条', withExt[5].content === '这一问')
+check('历史段与无 external 时逐字一致', JSON.stringify(withExt.slice(0, 4)) === JSON.stringify(plain.slice(0, 4)))
 
 const blank = buildChatMessages({ ...base, external: '   ' })
 check('空白 external 视同没有', JSON.stringify(blank) === JSON.stringify(plain))
@@ -93,6 +94,16 @@ check('本书模式仍发【作品资料】', JSON.stringify(bookMsgs).includes(
 check('本书模式仍带「写作搭档」', bookMsgs[0].content.includes('写作搭档'))
 check('本书模式仍带改稿协议', bookMsgs[0].content.includes('mz-edit'))
 check('本书模式仍拼上书稿口径', bookMsgs[0].content.includes('本书口径'))
+
+console.log('外部资料在手：系统提示词必须明说')
+const sysReady = chatSystemFor({ general: true, bookPrompt: '', externalHits: 9 })
+check('有检索结果时说明资料在手', sysReady.includes(EXTERNAL_READY_HINT))
+check('有检索结果时禁止说「我没有联网」', sysReady.includes('禁止说「我没有联网」'))
+check('有检索结果时要求标编号', sysReady.includes('[编号]'))
+check('检索失败时换成如实说明的提示', chatSystemFor({ general: true, bookPrompt: '', externalHits: 0 }).includes(EXTERNAL_FAILED_HINT))
+check('检索失败时不许假装查过', chatSystemFor({ general: true, bookPrompt: '', externalHits: 0 }).includes('不要假装查过'))
+check('没检索时通用提示词保持原样', chatSystemFor({ general: true, bookPrompt: '' }) === GENERAL_CHAT_SYSTEM)
+check('本书模式不受 externalHits 影响', !chatSystemFor({ general: false, bookPrompt: '书', externalHits: 9 }).includes('禁止说'))
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

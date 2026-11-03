@@ -141,17 +141,33 @@ export interface ExternalInput {
  * 检索结果 → 提示词块。有空结果与失败两种形态，都必须说人话：
  * 静默失败会让模型拿训练记忆冒充「查证过」，这是这套功能最怕的翻车方式。
  */
-export function formatExternal(r: ExternalInput): string {
+export function formatExternal(r: ExternalInput, opts?: { general?: boolean }): string {
   if (!r.hits.length) {
     const why = r.error ? `（${r.error.message}）` : ''
     return `【外部资料｜本次未取得外部资料${why}】
 你这次没有拿到任何可引用的外部资料。请只凭你自己的知识回答，并明确告诉作者这一点：
 哪些内容你不确定、需要作者自己核实。不要假装查过，也不要编造来源或 URL。`
   }
-  const head = `【外部资料｜联网检索于 ${stamp(r.at)}${r.cached ? '（命中缓存）' : ''}，非本书设定】\n查询：${r.queries.join('；')}`
   const body = r.hits
     .map((h, i) => `[${i + 1}] ${h.title} — ${h.url}\n${h.snippet || '（无摘要）'}`)
     .join('\n\n')
+  /*
+   * 通用模式不能照搬本书模式那套规则。
+   *
+   * 原来这块结尾写着「以上资料与本书设定冲突时，一律以本书设定为准」，
+   * 而通用模式的 system 又说「你是一个通用问答助手」——模型手里根本没有本书，
+   * 这句话等于告诉它「这批资料不归你用」，于是它宁可回「我没有联网」。
+   */
+  if (opts?.general) {
+    const head = `【外部资料｜刚刚为你联网检索于 ${stamp(r.at)}${r.cached ? '（命中缓存）' : ''}】\n查询：${r.queries.join('；')}`
+    return `${head}\n\n${body}\n\n使用规则：
+- 这就是你此刻的检索结果，请直接据此回答；不要再说「我没有联网」「拿不到实时信息」「你自己去看」。
+- 用到哪条就在句末标 [编号]；没标编号的事实视为你自己的推断。
+- 与问题无关的条目直接忽略，不要为了凑数把 9 条都念一遍。
+- 只可化用，不得整段搬运原文（有版权与雷同风险）。
+- 结果不足以回答的部分，明说「资料里没有」，不要编。`
+  }
+  const head = `【外部资料｜联网检索于 ${stamp(r.at)}${r.cached ? '（命中缓存）' : ''}，非本书设定】\n查询：${r.queries.join('；')}`
   return `${head}\n\n${body}\n\n使用规则：
 - 引用以上内容时在句末标注 [编号]；未标注的事实视为你自己的推断。
 - 以上资料与本书设定冲突时，一律以本书设定为准，并明确告诉作者哪里有出入。
@@ -249,7 +265,10 @@ export async function research(question: string, deps: ResearchDeps): Promise<Re
   const meta: ResearchMeta = { queries: res.queries, hits, cached: res.cached, at }
   return {
     meta,
-    text: formatExternal({ hits, queries: res.queries, at, cached: res.cached, error: res.error }),
+    text: formatExternal(
+      { hits, queries: res.queries, at, cached: res.cached, error: res.error },
+      { general: deps.general }
+    ),
     skipped: false,
     error: res.error
   }
