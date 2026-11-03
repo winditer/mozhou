@@ -52,39 +52,49 @@ export async function runSearch(p: RunSearchParams): Promise<SearchRunResult> {
   let cachedHits = 0
   let failure: SearchErrorKind | null = null
 
-  for (const q of queries) {
-    const key = cacheKey(p.channel.id, q, p.maxResults)
-    const hit = await cache.get(key)
-    if (hit?.length) {
-      all.push(...hit)
-      cachedHits++
-      continue
-    }
+  /*
+   * 多条查询并行。
+   *
+   * 原来是 for…await 逐条发：2 条查询就是 2 个来回，最坏 2×timeout 串着等。
+   * 查询之间没有依赖，串行只是白白把作者的时间加了两遍。
+   */
+  const results = await Promise.all(
+    queries.map(async (q) => {
+      const key = cacheKey(p.channel!.id, q, p.maxResults)
+      const hit = await cache.get(key)
+      if (hit?.length) return { hits: hit, cached: true, failure: null as SearchErrorKind | null }
 
-    const req = buildSearchRequest(p.channel, p.apiKey, q, p.maxResults)
-    try {
-      const res = await fetch(req.url, {
-        method: req.method,
-        headers: req.headers,
-        body: req.body,
-        signal: AbortSignal.timeout(p.timeoutMs ?? 8000)
-      })
-      if (!res.ok) {
-        failure = classifyStatus(res.status)
-        continue
+      const req = buildSearchRequest(p.channel!, p.apiKey, q, p.maxResults)
+      try {
+        const res = await fetch(req.url, {
+          method: req.method,
+          headers: req.headers,
+          body: req.body,
+          signal: AbortSignal.timeout(p.timeoutMs ?? 8000)
+        })
+        if (!res.ok) return { hits: [] as SearchHit[], cached: false, failure: classifyStatus(res.status) }
+        const json = (await res.json()) as unknown
+        const hits = extractHits(p.channel!.presetId, json, p.maxResults)
+        if (hits.length) {
+          await cache.set(key, hits)
+          return { hits, cached: false, failure: null as SearchErrorKind | null }
+        }
+        return { hits: [] as SearchHit[], cached: false, failure: 'empty' as SearchErrorKind }
+      } catch (e) {
+        // AbortSignal.timeout 抛 TimeoutError；其余（DNS/连接失败）归网络错误
+        return {
+          hits: [] as SearchHit[],
+          cached: false,
+          failure: ((e as Error).name === 'TimeoutError' ? 'timeout' : 'network') as SearchErrorKind
+        }
       }
-      const json = (await res.json()) as unknown
-      const hits = extractHits(p.channel.presetId, json, p.maxResults)
-      if (hits.length) {
-        all.push(...hits)
-        await cache.set(key, hits)
-      } else {
-        failure = failure ?? 'empty'
-      }
-    } catch (e) {
-      // AbortSignal.timeout 抛 TimeoutError；其余（DNS/连接失败）归网络错误
-      failure = (e as Error).name === 'TimeoutError' ? 'timeout' : 'network'
-    }
+    })
+  )
+
+  for (const r of results) {
+    if (r.hits.length) all.push(...r.hits)
+    if (r.cached) cachedHits++
+    else if (r.failure) failure = failure ?? r.failure
   }
 
   const hits = dedupeHits(all).slice(0, p.maxResults * 2)

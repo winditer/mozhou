@@ -5,6 +5,7 @@ import { resolveTaskModel, useApp } from '../store/app'
 import { assembleContext } from '../lib/prompt'
 import { generateChatReply, generateCustom, generateDraft } from '../lib/generate'
 import { parseQueryPlan, planQueryPrompt, research } from '../lib/research'
+import { mdToHtml } from '../lib/markdown'
 import { mz } from '../lib/bridge'
 import { abortChat } from '../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../lib/stream'
@@ -22,6 +23,24 @@ import { Check, Eye, EyeOff, MessageSquare, Send, Sparkles, Square, Trash2, Undo
  * 为什么要在提问里再说一遍：模型最信的是它自己上文里那段完整正文，
  * 光靠 system 里的规则压不住。这里把它拽回【作品资料】的当前章节正文。
  */
+/** 老式复制：clipboard API 被拒时的兜底（Electron 里可用） */
+function legacyCopy(text: string): boolean {
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.top = '-1000px'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return ok
+  } catch {
+    return false
+  }
+}
+
 const EDIT_RETRY_PROMPT =
   '重新摘录一遍改动：你上一批的 anchor 全都对不上书里的正文，多半是用上了你在对话里写过的那一版。请只从【作品资料】里的「当前章节正文」逐字复制 anchor（不要从你自己的上文里抄），对不上的地方直接说明，不要编。'
 
@@ -161,8 +180,51 @@ export function AIPanel({
    * 作者每次发送前显式决定，不做自动判断——判断错了比按钮多一步更让人恼火。
    */
   const [general, setGeneral] = useState(false)
+  // 复制后 1.5 秒回到常态：给个短暂的「已复制」，但不做成开关状态
+  const [copiedId, setCopiedId] = useState('')
   const [searching, setSearching] = useState('')
+  // 检索要等好几个来回，光写「正在联网检索…」看不出进展，配上秒数至少能判断是不是卡住了
+  const [searchSec, setSearchSec] = useState(0)
   const searchReady = Boolean(webSearch?.enabled && webSearch.channelId)
+
+  useEffect(() => {
+    if (!searching) {
+      setSearchSec(0)
+      return
+    }
+    const t = setInterval(() => setSearchSec((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [searching])
+
+  /**
+   * 复制回答原文（Markdown 源码，不是渲染后的纯文本——贴到别处还能保留结构）。
+   *
+   * clipboard API 在没有窗口焦点时会被拒（例如用脚本驱动界面），所以带一个
+   * textarea + execCommand 的老式兜底：报「复制失败」比复制不了更糟。
+   */
+  const copyReply = async (id: string, text: string): Promise<void> => {
+    let ok = false
+    try {
+      // 主进程的 clipboard 不受窗口焦点限制，优先用它
+      ok = await mz.app.copyText(text)
+    } catch {
+      /* 老版本或桥接缺失时退回浏览器 API */
+    }
+    if (!ok) {
+      try {
+        await navigator.clipboard.writeText(text)
+        ok = true
+      } catch {
+        ok = legacyCopy(text)
+      }
+    }
+    if (!ok) {
+      toast('复制失败，可以手动选中文字复制', 'error')
+      return
+    }
+    setCopiedId(id)
+    setTimeout(() => setCopiedId((cur) => (cur === id ? '' : cur)), 1500)
+  }
 
   useEffect(() => {
     const el = listRef.current
@@ -223,7 +285,9 @@ export function AIPanel({
                   model: r2.model,
                   task: 'chat',
                   temperature: 0.1,
-                  maxTokens: 200,
+                  // 规划只要一行词：思考过程会把额度吃光并拖慢几秒，一律关掉
+                  maxTokens: 120,
+                  thinking: 'off',
                   budgets: st.config?.settings.tokenBudgets,
                   system: prompt.system,
                   user: prompt.user,
@@ -486,25 +550,41 @@ export function AIPanel({
                     </span>
                   )}
                   {m.role === 'assistant' && (
-                    <button
-                      className="ml-auto opacity-0 group-hover:opacity-100 text-[11px]"
-                      style={{ color: 'var(--accent)' }}
-                      onClick={() => onInsertText(m.content)}
-                    >
-                      插入正文
-                    </button>
+                    <div className="ml-auto flex items-center gap-2">
+                      <button
+                        className="opacity-0 group-hover:opacity-100 text-[11px]"
+                        style={{ color: copiedId === m.id ? 'var(--ok)' : 'var(--accent)' }}
+                        title="复制这条回答的原文（Markdown）"
+                        onClick={() => void copyReply(m.id, m.content)}
+                      >
+                        {copiedId === m.id ? '✓ 已复制' : '复制'}
+                      </button>
+                      <button
+                        className="opacity-0 group-hover:opacity-100 text-[11px]"
+                        style={{ color: 'var(--accent)' }}
+                        onClick={() => onInsertText(m.content)}
+                      >
+                        插入正文
+                      </button>
+                    </div>
                   )}
                 </div>
-                <div
-                  className="text-[12.5px] leading-relaxed selectable whitespace-pre-wrap rounded-lg px-3 py-2"
-                  style={{
-                    background: m.role === 'user' ? 'var(--accent-soft)' : 'var(--panel)',
-                    border: '1px solid var(--border)',
-                    color: 'var(--text)'
-                  }}
-                >
-                  {m.content}
-                </div>
+                {m.role === 'assistant' ? (
+                  // 回答按 Markdown 渲染：模型本来就爱用 **粗体**、列表和代码块，
+                  // 原来原样显示，星号和减号全堆在正文里。
+                  <div
+                    className="md-body text-[12.5px] leading-relaxed selectable rounded-lg px-3 py-2"
+                    style={{ background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                    dangerouslySetInnerHTML={{ __html: mdToHtml(m.content) }}
+                  />
+                ) : (
+                  <div
+                    className="text-[12.5px] leading-relaxed selectable whitespace-pre-wrap rounded-lg px-3 py-2"
+                    style={{ background: 'var(--accent-soft)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                  >
+                    {m.content}
+                  </div>
+                )}
                 {/* 来源卡：作者要能核对「这句话是从哪来的」，所以标题可点开原文 */}
                 {m.research && m.research.hits.length > 0 && (
                   <details
@@ -571,20 +651,26 @@ export function AIPanel({
                 <div className="flex items-center gap-1.5 mb-1 text-[11px]" style={{ color: 'var(--accent)' }}>
                   <Sparkles size={11} className="pulse" /> {draft ? 'AI 正在输入…' : 'AI 正在思考…'}
                 </div>
-                <div
-                  className="text-[12.5px] leading-relaxed whitespace-pre-wrap rounded-lg px-3 py-2"
-                  style={{ background: 'var(--panel)', border: '1px solid var(--accent)' }}
-                >
-                  {draft || (
+                {draft ? (
+                  <div
+                    className="md-body text-[12.5px] leading-relaxed rounded-lg px-3 py-2"
+                    style={{ background: 'var(--panel)', border: '1px solid var(--accent)' }}
+                    dangerouslySetInnerHTML={{ __html: mdToHtml(draft) }}
+                  />
+                ) : (
+                  <div
+                    className="text-[12.5px] leading-relaxed whitespace-pre-wrap rounded-lg px-3 py-2"
+                    style={{ background: 'var(--panel)', border: '1px solid var(--accent)' }}
+                  >
                     <span style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>
                       {thought ? thought.slice(-600) : '…'}
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
                 {/* 思考类模型可能一两分钟只吐思考：把等待进度说清楚 */}
                 {streaming && (
                   <div className="mt-1 text-[11px]" style={{ color: 'var(--text-faint)' }}>
-                    {stage || streamStatus({ text: draft, thought, elapsedMs: elapsed })}
+                    {searching ? `${searching} ${searchSec}s` : stage || streamStatus({ text: draft, thought, elapsedMs: elapsed })}
                   </div>
                 )}
               </div>

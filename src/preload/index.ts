@@ -16,6 +16,7 @@ const api = {
   app: {
     info: () => invoke('app:info'),
     openExternal: (url: string) => invoke('app:open-external', url),
+    copyText: (text: string) => invoke('app:copy-text', text),
     isFullScreen: () => invoke('win:is-fullscreen'),
     setFullScreen: (value: boolean) => send('win:set-fullscreen', value),
     onToggleFocus: (cb: () => void) => on('ui:toggle-focus', cb),

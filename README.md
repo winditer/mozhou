@@ -29,6 +29,15 @@
 
 ## 更新日志
 
+### 1.8.6
+- **提速：联网检索从「串行四步」压到「三步且并行」**。实测（模拟真实延迟：规划 1.5s、检索 0.8s/条、摘要 2.5s、回答 2s）：改前首字 6.9s / 总 7.5s，改后总 ~4.3s。
+  - **多条查询并行**：原来是 `for…await` 逐条发，2 条查询就是 2 个来回，最坏 2×timeout 串着等；现在 `Promise.all`，实测两条查询同时发出、同时返回（800ms 而不是 1600ms）。
+  - **检索词规划关掉思考**（`thinking: 'off'`、`maxTokens: 120`）：规划只要一行词，思考过程会把 200 token 吃光还要多等几秒。实测报文 `thinking: {"type": "disabled"}`（仅 DeepSeek 系渠道，其它网关不认这个字段）。
+  - **「先压缩再注入」只在原文超过 3000 字时才压**：摘要是一次完整模型调用（实测 2.5 秒），5 条短结果压一遍纯属浪费。
+  - **等待时显示秒数**（「正在联网检索… 3s」），卡住了能看出来。
+- **新：AI 回答按 Markdown 渲染**。模型本来就爱用 `**粗体**`、列表、代码块和引用，原来原样显示，满屏星号和减号。自带一个极简渲染器（`src/renderer/lib/markdown.ts`）：先整体 HTML 转义再解析，`<script>` 只会显示成文字；链接只认 http/https，`javascript:` 降级成纯文本；`[1]` 这类来源编号不会被误当成链接。刻意不引第三方库——通用解析器会把改稿块和中文标点紧贴的 `**` 拆错。
+- **新：回答可一键复制**。悬停回答出现「复制」（复制 Markdown 源码，贴到别处保留结构）。复制走主进程 `clipboard`，不受窗口焦点限制——渲染进程的 `navigator.clipboard` 在无焦点时会直接 `NotAllowedError`。
+
 ### 1.8.5
 - **修：明明检索到了 9 条，AI 还是回「我没有联网」**。三处一起改：
   - **外部资料挪到提问之前**。原来它排在对话历史之后……准确说是排在历史**之前**：模型最看重最后几条消息，于是它读到的是自己上一轮说的「我没有联网」，顺着往下说，哪怕资料就在同一个请求里。现在顺序是 `system → 作品资料 → 历史 → 【外部资料】 → 提问`。
@@ -233,8 +242,8 @@ npm run build         # electron-vite build → out/
 ### 打包
 
 ```bash
-npm run dist:mac      # → release/Mozhou-1.8.5-arm64.dmg / -x64.dmg（同时出 zip）
-npm run dist:win      # → release/Mozhou-Setup-1.8.5.exe（electron-builder 26 自带 NSIS，macOS 上也能交叉构建）
+npm run dist:mac      # → release/Mozhou-1.8.6-arm64.dmg / -x64.dmg（同时出 zip）
+npm run dist:win      # → release/Mozhou-Setup-1.8.6.exe（electron-builder 26 自带 NSIS，macOS 上也能交叉构建）
 npm run dist:dir      # 只出未压缩目录，调试打包问题用
 ```
 
@@ -242,15 +251,15 @@ npm run dist:dir      # 只出未压缩目录，调试打包问题用
 
 | 产物 | 说明 |
 |---|---|
-| `release/Mozhou-1.8.5-arm64.dmg` | Apple Silicon 安装镜像（推荐） |
-| `release/Mozhou-1.8.5-x64.dmg` | Intel 安装镜像 |
-| `release/Mozhou-1.8.5-arm64.zip` / `-x64.zip` | 解压得到 `Mozhou.app`，拖进「应用程序」即可 |
-| `release/Mozhou-Setup-1.8.5.exe` | Windows x64 安装包（NSIS，未签名，SmartScreen 会提示一次） |
+| `release/Mozhou-1.8.6-arm64.dmg` | Apple Silicon 安装镜像（推荐） |
+| `release/Mozhou-1.8.6-x64.dmg` | Intel 安装镜像 |
+| `release/Mozhou-1.8.6-arm64.zip` / `-x64.zip` | 解压得到 `Mozhou.app`，拖进「应用程序」即可 |
+| `release/Mozhou-Setup-1.8.6.exe` | Windows x64 安装包（NSIS，未签名，SmartScreen 会提示一次） |
 | `release/mac-arm64/Mozhou.app` | 解包后的 arm64 应用本体 |
 
-构建记录（含 sha256）见 `release/BUILD-1.8.5.md`。
+构建记录（含 sha256）见 `release/BUILD-1.8.6.md`。
 
-> **关于 .dmg**：制作 dmg 要调 `hdiutil` 挂载磁盘镜像。受限沙箱/CI 容器里可能被系统拒绝（`hdiutil create: Operation not permitted`）；1.8.5 是在本机正常权限下构建的，dmg 已随仓库产出。若你的环境拒绝，可用同目录的 `.zip`，或在桌面环境运行 `npm run dist:mac` 重新生成。
+> **关于 .dmg**：制作 dmg 要调 `hdiutil` 挂载磁盘镜像。受限沙箱/CI 容器里可能被系统拒绝（`hdiutil create: Operation not permitted`）；1.8.6 是在本机正常权限下构建的，dmg 已随仓库产出。若你的环境拒绝，可用同目录的 `.zip`，或在桌面环境运行 `npm run dist:mac` 重新生成。
 
 > 首次打包需要下载 Electron 预编译包（约 100 MB），electron-builder 会缓存在 `~/Library/Caches/electron-builder`。国内网络建议先设 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
@@ -356,7 +365,7 @@ docs/
 
 - **未做代码签名 / 公证**（没有 Apple Developer ID）。首次打开需要右键 → 打开；分发给他人在 Gatekeeper 下也会提示一次。
 - 打包产物默认是 `.zip`（`.app` 已打好、可直接运行）。`.dmg` 的生成需要 `hdiutil` 挂载磁盘镜像，在受限沙箱里会被拒绝，请在本机运行 `bash scripts/make-dmg.sh`。
-- Windows 安装包（NSIS）1.8.5 已在 macOS 上交叉构建（electron-builder 26 自带 NSIS）。仍未做 Windows 代码签名，建议在 Windows 实机上安装冒烟一次。
+- Windows 安装包（NSIS）1.8.6 已在 macOS 上交叉构建（electron-builder 26 自带 NSIS）。仍未做 Windows 代码签名，建议在 Windows 实机上安装冒烟一次。
 - 只做了 macOS 与 Windows 打包配置，Linux 未验证。
 - 单部作品没有做分卷式的数据库索引，超大项目（>100 万字）打开会略慢（整文件读入内存）。
 - 版本快照是「每章 20 个整章副本」，不吃内存但会占磁盘，超大项目可在章节历史里手动清空。

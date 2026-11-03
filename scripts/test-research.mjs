@@ -28,7 +28,7 @@ await build({
   logLevel: 'silent',
   alias: { '@shared': join(root, 'src/shared') }
 })
-const { buildQueries, formatExternal, research, planQueryPrompt, parseQueryPlan } = await import(pathToFileURL(outfile).href)
+const { buildQueries, formatExternal, research, planQueryPrompt, parseQueryPlan, needsCompression, COMPRESS_MIN_CHARS } = await import(pathToFileURL(outfile).href)
 
 let pass = 0
 let fail = 0
@@ -98,6 +98,9 @@ check('失败时不留编号', !failed.includes('[1]'))
 
 console.log('research 编排')
 const hit = (i) => ({ title: `T${i}`, url: `https://e.com/${i}`, snippet: `S${i}`, source: 'e.com' })
+// 1.8.6 起「先压缩再注入」只在原文超过 COMPRESS_MIN_CHARS 时才触发，
+// 所以要验证摘要逻辑本身，得让结果够长
+const longHit = (i) => ({ ...hit(i), snippet: `S${i}` + 'x'.repeat(1800) })
 
 const skipped = await research('帮我写一段打斗', {
   channelId: 'c',
@@ -126,16 +129,16 @@ const sumMismatch = await research('明代锦衣卫的品级', {
   channelId: 'c',
   maxResults: 5,
   maxQueries: 2,
-  run: async (req) => ({ hits: [hit(1), hit(2)], queries: req.queries, cached: false }),
+  run: async (req) => ({ hits: [longHit(1), longHit(2)], queries: req.queries, cached: false }),
   summarize: async () => '[1] 只压出一条'
 })
-check('摘要条数对不上时退回原文', sumMismatch.meta.hits.map((h) => h.snippet).join('|') === 'S1|S2', sumMismatch.meta.hits.map((h) => h.snippet).join('|'))
+check('摘要条数对不上时退回原文', sumMismatch.meta.hits.every((h) => h.snippet.startsWith('S')), sumMismatch.meta.hits.map((h) => h.snippet.slice(0, 6)).join('|'))
 
 const sumOk = await research('明代锦衣卫的品级', {
   channelId: 'c',
   maxResults: 5,
   maxQueries: 2,
-  run: async (req) => ({ hits: [hit(1), hit(2)], queries: req.queries, cached: false }),
+  run: async (req) => ({ hits: [longHit(1), longHit(2)], queries: req.queries, cached: false }),
   summarize: async () => '[1] 甲\n[2] 乙'
 })
 check('摘要条数对上时采用', sumOk.meta.hits.map((h) => h.snippet).join('|') === '甲|乙', sumOk.meta.hits.map((h) => h.snippet).join('|'))
@@ -277,6 +280,42 @@ check('通用模式要求忽略无关条目', genBlock.includes('无关的条目
 const bookBlock = formatExternal(genHit)
 check('本书模式仍保留本书设定优先', bookBlock.includes('以本书设定为准'))
 check('本书模式仍要求标编号', bookBlock.includes('[编号]'))
+
+console.log('压缩门槛：够长才值得多花一次模型调用')
+check('短结果不压', needsCompression('x'.repeat(COMPRESS_MIN_CHARS)) === false)
+check('长结果才压', needsCompression('x'.repeat(COMPRESS_MIN_CHARS + 1)) === true)
+check('空串不压', needsCompression('') === false)
+let summarizeCalls = 0
+const shortHits = await research('明代锦衣卫的品级', {
+  channelId: 'c',
+  maxResults: 5,
+  maxQueries: 2,
+  summarize: async () => {
+    summarizeCalls++
+    return null
+  },
+  run: async (req) => ({
+    hits: [{ title: 'T', url: 'https://e.com/1', snippet: '短摘要', source: 'e.com' }],
+    queries: req.queries,
+    cached: false
+  })
+})
+check('短结果不触发摘要调用', summarizeCalls === 0 && shortHits.meta.hits[0].snippet === '短摘要')
+const longHits = await research('明代锦衣卫的品级', {
+  channelId: 'c',
+  maxResults: 5,
+  maxQueries: 2,
+  summarize: async (raw) => {
+    summarizeCalls++
+    return raw.split(/\n(?=\[\d+\])/).map((l) => l.replace(/^\[\d+\]\s*/, '')).join('\n').replace(/T/g, '压过')
+  },
+  run: async (req) => ({
+    hits: [{ title: 'T', url: 'https://e.com/1', snippet: 'x'.repeat(4000), source: 'e.com' }],
+    queries: req.queries,
+    cached: false
+  })
+})
+check('长结果会触发摘要调用', summarizeCalls === 1)
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

@@ -603,6 +603,8 @@ export interface MzApi {
   app: {
     info(): Promise<{ version: string; platform: string; userData: string; locale: string }>
     openExternal(url: string): Promise<void>
+    /** 写系统剪贴板（走主进程，不受窗口焦点限制） */
+    copyText(text: string): Promise<boolean>
     isFullScreen(): Promise<boolean>
     setFullScreen(value: boolean): void
     onToggleFocus(cb: () => void): () => void

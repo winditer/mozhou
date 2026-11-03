@@ -129,6 +129,18 @@ function stamp(at: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+/**
+ * 「先压缩再注入」什么时候才值得。
+ *
+ * 摘要是一次完整的 LLM 调用（实测 2.5 秒），5 条短结果压一遍纯属浪费——
+ * 它本来是为了别让长文把上下文挤爆。所以只在原始文本确实很长时才压。
+ */
+export const COMPRESS_MIN_CHARS = 3000
+
+export function needsCompression(raw: string): boolean {
+  return String(raw || '').length > COMPRESS_MIN_CHARS
+}
+
 export interface ExternalInput {
   hits: SearchHit[]
   queries: string[]
@@ -254,10 +266,14 @@ export async function research(question: string, deps: ResearchDeps): Promise<Re
 
   let hits = res.hits
   if (hits.length && deps.summarize) {
-    try {
-      hits = await applySummary(hits, deps.summarize)
-    } catch {
-      /* 摘要失败用原文，不影响这轮回答 */
+    // 只有原文够长才值得多花一次模型调用（见 needsCompression）
+    const raw = hits.map((h, i) => `[${i + 1}] ${h.title}\n${h.snippet}`).join('\n\n')
+    if (needsCompression(raw)) {
+      try {
+        hits = await applySummary(hits, deps.summarize)
+      } catch {
+        /* 摘要失败用原文，不影响这轮回答 */
+      }
     }
   }
 

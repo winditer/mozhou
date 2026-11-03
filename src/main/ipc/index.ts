@@ -1,4 +1,4 @@
-import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, app, clipboard, dialog, ipcMain, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import { basename } from 'node:path'
 import type {
@@ -70,6 +70,16 @@ export function registerIpc(): void {
 
   ipcMain.handle('app:open-external', async (_e, url: string) => {
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
+  })
+
+  /*
+   * 复制走主进程：渲染进程的 navigator.clipboard 要求窗口有焦点，
+   * 无焦点时直接 NotAllowedError，execCommand 也会静默失败。
+   * Electron 的 clipboard 没有这个限制。
+   */
+  ipcMain.handle('app:copy-text', (_e, text: string) => {
+    clipboard.writeText(String(text ?? ''))
+    return true
   })
 
   ipcMain.on('win:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
