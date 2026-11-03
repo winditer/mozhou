@@ -92,5 +92,30 @@ check('引用被渲染', html.includes('<blockquote>'))
 check('代码块被渲染', html.includes('<pre><code'))
 check('没有把编号渲染成链接', !html.includes('<a '))
 
+console.log('表格')
+const table = `| 朝代 | 起止 | 备注 |
+| :--- | :---: | ---: |
+| 明 | 1368–1644 | 十六帝 |
+| 清 | 1636–1912 | 十二帝 |`
+const th = mdToHtml(table)
+check('生成 table 标签', th.includes('<table>') && th.includes('</table>'))
+check('表头是 th', th.match(/<th style/g)?.length === 3, String(th.match(/<th style/g)?.length))
+check('两行数据 6 个 td', th.match(/<td/g)?.length === 6, String(th.match(/<td/g)?.length))
+check('左对齐', th.includes('text-align:left'), th)
+check('居中对齐', th.includes('text-align:center'))
+check('右对齐', th.includes('text-align:right'))
+check('单元格内容正确', th.includes('>明<') && th.includes('>1368–1644<'))
+check('表格外面套了可滚动容器', th.includes('md-table-wrap'))
+check('行内格式在单元格里生效', mdToHtml('| a | b |\n| --- | --- |\n| **粗** | `代码` |').includes('<strong>粗</strong>'))
+check('缺列时补空单元格', mdToHtml('| a | b | c |\n| --- | --- | --- |\n| 1 |').match(/<td/g)?.length === 3)
+check('正文里的单个竖线不变成表格', !mdToHtml('用 | 分隔的文本').includes('<table>'))
+check('没有分隔行就不是表格', !mdToHtml('| a | b |\n| 1 | 2 |').includes('<table>'))
+check('表格后接段落能正常收尾', (() => {
+  const h = mdToHtml(table + '\n\n后面的段落')
+  return h.includes('</table>') && h.includes('<p>后面的段落</p>')
+})())
+check('两列表格也能解析', mdToHtml('| 项 | 值 |\n| --- | --- |\n| 一 | 1 |').includes('<table>'))
+check('单元格里的链接照常渲染', mdToHtml('| 源 | 链接 |\n| --- | --- |\n| 官方 | [点这里](https://e.com/x) |').includes('<a href="https://e.com/x"'))
+
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

@@ -45,6 +45,29 @@ function inline(text: string): string {
     .join('')
 }
 
+/** 一行是不是表格的「分隔行」：| --- | :---: | ---: | */
+function isTableSep(line: string): boolean {
+  const t = line.trim()
+  if (!t.includes('-') || !t.includes('|')) return false
+  return /^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$/.test(t)
+}
+
+/** 把 | a | b | 拆成 ['a','b']，两侧的竖线不算空列 */
+function cells(line: string): string[] {
+  let t = line.trim()
+  if (t.startsWith('|')) t = t.slice(1)
+  if (t.endsWith('|')) t = t.slice(0, -1)
+  return t.split('|').map((c) => c.trim())
+}
+
+/** 对齐：:--- 左、:---: 居中、---: 右 */
+function alignOf(sep: string): 'left' | 'center' | 'right' {
+  const t = sep.trim()
+  if (/^:.*:$/.test(t)) return 'center'
+  if (/:$/.test(t)) return 'right'
+  return 'left'
+}
+
 /**
  * 块级解析。支持的块：围栏代码、标题、引用、有序/无序列表、分隔线、段落。
  * 对话里够用了；表格之类不处理，原样输出（至少不会错乱）。
@@ -74,7 +97,8 @@ export function mdToHtml(src: string): string {
     closeQuote()
   }
 
-  for (const raw of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]
     if (code) {
       if (/^```\s*$/.test(raw.trim())) {
         out.push(`<pre><code data-lang="${escapeHtml(codeLang)}">${code.join('\n')}</code></pre>`)
@@ -96,6 +120,35 @@ export function mdToHtml(src: string): string {
 
     if (!raw.trim()) {
       flush()
+      continue
+    }
+
+    /*
+     * 表格：当前行含 |，下一行是分隔行。
+     * 只认这种「表头 + 分隔行」的组合——正文里偶尔出现的单个 | 不能变成表格。
+     */
+    if (raw.includes('|') && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      flush()
+      const head = cells(raw)
+      const sep = cells(lines[i + 1])
+      const aligns = sep.map(alignOf)
+      let j = i + 2
+      const rows: string[][] = []
+      while (j < lines.length && lines[j].includes('|') && lines[j].trim()) {
+        rows.push(cells(lines[j]))
+        j++
+      }
+      const cell = (tag: 'th' | 'td', text: string, col: number): string =>
+        `<${tag} style="text-align:${aligns[col] ?? 'left'}">${inline(text)}</${tag}>`
+      const thead = `<thead><tr>${head.map((c, ci) => cell('th', c, ci)).join('')}</tr></thead>`
+      const tbody = rows.length
+        ? `<tbody>${rows
+            .map((r) => `<tr>${head.map((_h, ci) => cell('td', r[ci] ?? '', ci)).join('')}</tr>`)
+            .join('')}</tbody>`
+        : ''
+      // 窄面板里表格会横向溢出，套一层可横向滚动的容器
+      out.push(`<div class="md-table-wrap"><table>${thead}${tbody}</table></div>`)
+      i = j - 1
       continue
     }
 
