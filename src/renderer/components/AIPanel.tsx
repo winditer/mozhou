@@ -4,7 +4,7 @@ import { estimateTokens, relativeTime, uid } from '@shared/utils'
 import { resolveTaskModel, useApp } from '../store/app'
 import { assembleContext } from '../lib/prompt'
 import { generateChatReply, generateCustom, generateDraft } from '../lib/generate'
-import { research } from '../lib/research'
+import { parseQueryPlan, planQueryPrompt, research } from '../lib/research'
 import { mz } from '../lib/bridge'
 import { abortChat } from '../lib/ai'
 import { isAbortMessage, streamStatus, useElapsed } from '../lib/stream'
@@ -203,6 +203,37 @@ export function AIPanel({
             maxResults: webSearch.maxResults,
             maxQueries: webSearch.maxQueries,
             run: (req) => mz.search.run(req),
+            /*
+             * 让模型把问题改写成 1–3 条检索词。
+             * 规则拼接把整句丢给搜索引擎，长句会被当自然语言处理，「今天/最近」这类
+             * 相对时间也会失真；这一步多一次很小的请求（maxTokens 200）换干净的查询词。
+             * 抛错或解析空都在 research() 里退回规则词，不影响这一轮能不能查。
+             */
+            plan: async (question) => {
+              const st = useApp.getState()
+              const r2 = resolveTaskModel(st.config, st.project!, 'chat')
+              if (!r2) return null
+              const prompt = planQueryPrompt(question, new Date(), webSearch.maxQueries)
+              setStage('正在整理检索词…')
+              try {
+                const raw = await generateCustom({
+                  project,
+                  chapter,
+                  channel: r2.channel,
+                  model: r2.model,
+                  task: 'chat',
+                  temperature: 0.1,
+                  maxTokens: 200,
+                  budgets: st.config?.settings.tokenBudgets,
+                  system: prompt.system,
+                  user: prompt.user,
+                  onDelta: () => {}
+                })
+                return parseQueryPlan(raw, webSearch.maxQueries)
+              } finally {
+                setStage('正在联网检索…')
+              }
+            },
             summarize: webSearch.summarize
               ? async (raw) => {
                   const st = useApp.getState()
@@ -480,6 +511,10 @@ export function AIPanel({
                     <summary className="text-[11px] cursor-pointer" style={{ color: 'var(--text-dim)' }}>
                       来源 {m.research.hits.length} 条{m.research.cached ? '（缓存）' : ''}
                     </summary>
+                    {/* 查的是什么词必须露出来：检索词现在由模型改写，作者要能看出「它到底搜了什么」 */}
+                    <div className="mt-1 text-[10.5px] leading-relaxed" style={{ color: 'var(--text-faint)' }}>
+                      检索：{m.research.queries.join('；')}
+                    </div>
                     <div className="mt-1 flex flex-col gap-1">
                       {m.research.hits.map((h, i) => (
                         <button

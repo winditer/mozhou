@@ -29,9 +29,14 @@
 
 ## 更新日志
 
+### 1.8.4
+- **新：检索词由模型改写，不再把整句丢给搜索引擎**。通用模式下先发一次很小的请求（`maxTokens: 200`，温度 0.1），把问题改写成 1–3 条查询词：「今天/最近」按提示词里给的绝对日期换成具体月份，「帮我看看最近科技圈的大事按重要性讲一下」→ `2026 年 11 月科技圈大事` + `2026 年 AI 芯片 融资`。实测报文：先一次 `PLAN`（200 token），再用改写后的词各发一次检索。
+- **新：来源卡展开后显示「检索：」一行**。检索词既然由模型改写，作者就得能看见它到底搜了什么，否则查偏了也没法判断。
+- **健壮性**：规划抛错、输出解析不出可用词 → 一律退回规则词照查；只有模型明确回「无需检索」才跳过。创作指令（`帮我写/续写/润色`）连规划都不发。
+
 ### 1.8.3
 - **修：开了「通用」、也配了搜索源，AI 却说「我没联网」**。两处叠加：①查询词是靠一张窄词表判的（`历史/朝代/工艺/多少/是什么…`），它认不出「今天有什么热榜」「2026 年诺贝尔文学奖是谁」「美国现在的总统是谁」，于是**一次请求都没发**；②真发了但失败时，界面一声不响——错误只塞进给模型的降级块里，作者看到的就成了「AI 不会联网」。现在通用模式只跳纯创作指令（检索只会把别人的桥段塞进来），其余照查；失败弹「联网检索没成功：<原因>」，主动跳过也按原因说清楚。**本书模式行为一分未动。**
-- **改：通用模式的查询词直接用问题本身**（去掉语气词，上限 60 字），不再要求命中那张窄词表。
+- **改：通用模式的查询词直接用问题本身**（去掉语气词，上限 60 字），不再要求命中那张窄词表（1.8.4 起进一步改由模型改写）。
 
 ### 1.8.2
 - **改：「联网」开关改名「通用」，语义换成「跳出这本书」**。原来它只控制这一轮要不要先检索，作品资料照样每轮注入（最多两万 token），身份也还是「这本书的写作搭档」——于是问「明朝哪年建立」这种纯事实问题，模型答完事实还会附一段第 3 章建议。现在开启「通用」：**不注入任何作品资料**（空块整条不发，避免模型以为书是空的），身份换成通用问答助手，技法卡与文风分身也不给，改稿协议一并关掉；配了搜索源时仍会先联网查。
@@ -221,8 +226,8 @@ npm run build         # electron-vite build → out/
 ### 打包
 
 ```bash
-npm run dist:mac      # → release/Mozhou-1.8.3-arm64.dmg / -x64.dmg（同时出 zip）
-npm run dist:win      # → release/Mozhou-Setup-1.8.3.exe（electron-builder 26 自带 NSIS，macOS 上也能交叉构建）
+npm run dist:mac      # → release/Mozhou-1.8.4-arm64.dmg / -x64.dmg（同时出 zip）
+npm run dist:win      # → release/Mozhou-Setup-1.8.4.exe（electron-builder 26 自带 NSIS，macOS 上也能交叉构建）
 npm run dist:dir      # 只出未压缩目录，调试打包问题用
 ```
 
@@ -230,15 +235,15 @@ npm run dist:dir      # 只出未压缩目录，调试打包问题用
 
 | 产物 | 说明 |
 |---|---|
-| `release/Mozhou-1.8.3-arm64.dmg` | Apple Silicon 安装镜像（推荐） |
-| `release/Mozhou-1.8.3-x64.dmg` | Intel 安装镜像 |
-| `release/Mozhou-1.8.3-arm64.zip` / `-x64.zip` | 解压得到 `Mozhou.app`，拖进「应用程序」即可 |
-| `release/Mozhou-Setup-1.8.3.exe` | Windows x64 安装包（NSIS，未签名，SmartScreen 会提示一次） |
+| `release/Mozhou-1.8.4-arm64.dmg` | Apple Silicon 安装镜像（推荐） |
+| `release/Mozhou-1.8.4-x64.dmg` | Intel 安装镜像 |
+| `release/Mozhou-1.8.4-arm64.zip` / `-x64.zip` | 解压得到 `Mozhou.app`，拖进「应用程序」即可 |
+| `release/Mozhou-Setup-1.8.4.exe` | Windows x64 安装包（NSIS，未签名，SmartScreen 会提示一次） |
 | `release/mac-arm64/Mozhou.app` | 解包后的 arm64 应用本体 |
 
-构建记录（含 sha256）见 `release/BUILD-1.8.3.md`。
+构建记录（含 sha256）见 `release/BUILD-1.8.4.md`。
 
-> **关于 .dmg**：制作 dmg 要调 `hdiutil` 挂载磁盘镜像。受限沙箱/CI 容器里可能被系统拒绝（`hdiutil create: Operation not permitted`）；1.8.3 是在本机正常权限下构建的，dmg 已随仓库产出。若你的环境拒绝，可用同目录的 `.zip`，或在桌面环境运行 `npm run dist:mac` 重新生成。
+> **关于 .dmg**：制作 dmg 要调 `hdiutil` 挂载磁盘镜像。受限沙箱/CI 容器里可能被系统拒绝（`hdiutil create: Operation not permitted`）；1.8.4 是在本机正常权限下构建的，dmg 已随仓库产出。若你的环境拒绝，可用同目录的 `.zip`，或在桌面环境运行 `npm run dist:mac` 重新生成。
 
 > 首次打包需要下载 Electron 预编译包（约 100 MB），electron-builder 会缓存在 `~/Library/Caches/electron-builder`。国内网络建议先设 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
@@ -344,7 +349,7 @@ docs/
 
 - **未做代码签名 / 公证**（没有 Apple Developer ID）。首次打开需要右键 → 打开；分发给他人在 Gatekeeper 下也会提示一次。
 - 打包产物默认是 `.zip`（`.app` 已打好、可直接运行）。`.dmg` 的生成需要 `hdiutil` 挂载磁盘镜像，在受限沙箱里会被拒绝，请在本机运行 `bash scripts/make-dmg.sh`。
-- Windows 安装包（NSIS）1.8.3 已在 macOS 上交叉构建（electron-builder 26 自带 NSIS）。仍未做 Windows 代码签名，建议在 Windows 实机上安装冒烟一次。
+- Windows 安装包（NSIS）1.8.4 已在 macOS 上交叉构建（electron-builder 26 自带 NSIS）。仍未做 Windows 代码签名，建议在 Windows 实机上安装冒烟一次。
 - 只做了 macOS 与 Windows 打包配置，Linux 未验证。
 - 单部作品没有做分卷式的数据库索引，超大项目（>100 万字）打开会略慢（整文件读入内存）。
 - 版本快照是「每章 20 个整章副本」，不吃内存但会占磁盘，超大项目可在章节历史里手动清空。

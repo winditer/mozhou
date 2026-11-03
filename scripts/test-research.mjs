@@ -28,7 +28,7 @@ await build({
   logLevel: 'silent',
   alias: { '@shared': join(root, 'src/shared') }
 })
-const { buildQueries, formatExternal, research } = await import(pathToFileURL(outfile).href)
+const { buildQueries, formatExternal, research, planQueryPrompt, parseQueryPlan } = await import(pathToFileURL(outfile).href)
 
 let pass = 0
 let fail = 0
@@ -189,6 +189,82 @@ check('检索失败时降级块仍给模型', genErr.text.includes('未取得外
 
 const genSkip = await research('帮我写一段打斗', { general: true, channelId: 'c', maxResults: 5, maxQueries: 2, run: async (req) => ({ hits: [], queries: req.queries, cached: false }) })
 check('通用模式跳过创作指令时带 skipReason', genSkip.skipped && genSkip.skipReason === 'creative', JSON.stringify(genSkip.skipReason))
+
+console.log('模型规划检索词')
+const now = new Date(2026, 10, 3, 9, 0, 0)
+const pp = planQueryPrompt('最近有什么 AI 大新闻', now, 2)
+check('规划提示词带今天的绝对日期', pp.system.includes('2026 年 11 月 3 日'))
+check('规划提示词说明相对时间换算', pp.system.includes('「今天」指 2026 年 11 月 3 日'))
+check('规划提示词带年份', pp.system.includes('2026'))
+check('规划提示词限定条数', pp.system.includes('最多 2 条'))
+check('规划提示词给「无需检索」出口', pp.system.includes('无需检索'))
+check('规划提示词的 user 就是原问题', pp.user === '最近有什么 AI 大新闻')
+
+check('解析：编号与项目符号被清掉', JSON.stringify(parseQueryPlan('1. 2026 年 AI 大新闻\n- 2026 AI 发布会', 2)) === JSON.stringify(['2026 年 AI 大新闻', '2026 AI 发布会']), JSON.stringify(parseQueryPlan('1. 2026 年 AI 大新闻\n- 2026 AI 发布会', 2)))
+check('解析：最多取 maxQueries 条', parseQueryPlan('a1\na2\na3\na4', 2)?.length === 2)
+check('解析：去重', parseQueryPlan('今天天气\n今天天气', 3)?.length === 1)
+check('解析：解释性长句被丢掉', parseQueryPlan('这是一条很长的解释'.repeat(12), 3) === null)
+check('解析：模型说无需检索 → 空数组', JSON.stringify(parseQueryPlan('无需检索', 3)) === '[]')
+check('解析：空输出 → null（退回规则词）', parseQueryPlan('   ', 3) === null)
+check('解析：结尾标点被去掉', parseQueryPlan('明朝建立时间？', 1)?.[0] === '明朝建立时间')
+
+const planned = await research('最近有什么 AI 大新闻', {
+  general: true,
+  channelId: 'c',
+  maxResults: 5,
+  maxQueries: 2,
+  plan: async () => ['2026 年 AI 大新闻', '2026 年 11 月 AI 发布会'],
+  run: async (req) => ({ hits: [], queries: req.queries, cached: false })
+})
+check('模型规划的查询词被真的用上', JSON.stringify(planned.meta?.queries) === JSON.stringify(['2026 年 AI 大新闻', '2026 年 11 月 AI 发布会']), JSON.stringify(planned.meta?.queries))
+
+const planFail = await research('2026 年诺贝尔文学奖是谁', {
+  general: true,
+  channelId: 'c',
+  maxResults: 5,
+  maxQueries: 2,
+  plan: async () => {
+    throw new Error('plan boom')
+  },
+  run: async (req) => ({ hits: [], queries: req.queries, cached: false })
+})
+check('规划抛错退回规则词', planFail.meta !== null && planFail.meta.queries.length === 1, JSON.stringify(planFail.meta?.queries))
+
+const planNull = await research('今天有什么热榜', {
+  general: true,
+  channelId: 'c',
+  maxResults: 5,
+  maxQueries: 2,
+  plan: async () => null,
+  run: async (req) => ({ hits: [], queries: req.queries, cached: false })
+})
+check('规划返回 null 也照查（不退化成不查）', planNull.meta !== null && planNull.meta.queries.length === 1, JSON.stringify(planNull.meta))
+
+const planSkip = await research('今天有什么热榜', {
+  general: true,
+  channelId: 'c',
+  maxResults: 5,
+  maxQueries: 2,
+  plan: async () => [],
+  run: async () => {
+    throw new Error('不该被调用')
+  }
+})
+check('模型明说无需检索才跳过', planSkip.skipped === true && planSkip.text === '')
+
+const planCreative = await research('帮我写一段打斗', {
+  general: true,
+  channelId: 'c',
+  maxResults: 5,
+  maxQueries: 2,
+  plan: async () => {
+    throw new Error('创作指令不该请模型规划')
+  },
+  run: async () => {
+    throw new Error('不该被调用')
+  }
+})
+check('创作指令不请模型规划', planCreative.skipped && planCreative.skipReason === 'creative')
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

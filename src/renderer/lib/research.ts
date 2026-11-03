@@ -74,6 +74,55 @@ export function buildQueries(
   return { queries: queries.slice(0, Math.max(1, maxQueries)), reason: opts?.general ? 'general' : 'fact' }
 }
 
+/**
+ * 让模型把问题改写成检索词。
+ *
+ * 规则拼接的查询词有两个硬伤：长句照抄会被搜索引擎当自然语言处理，
+ * 相对时间（今天 / 最近 / 昨天）离开上下文就失去意义。这两件事模型一眼能办。
+ * 代价是每轮检索多一次很小的请求（maxTokens 200），换来查询词干净。
+ */
+export function planQueryPrompt(question: string, now: Date, maxQueries = 3): { system: string; user: string } {
+  const stamp = `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 ${now.getDate()} 日`
+  return {
+    system: `你是检索词规划员。把作者的问题改写成 ${Math.max(1, maxQueries)} 条以内适合搜索引擎的查询词。
+
+规则：
+- 一行一条，最多 ${Math.max(1, maxQueries)} 条，不要编号、不要解释、不要引号。
+- 只保留关键专名、时间、指标；去掉「帮我」「请问」「我想知道」「是什么」这类词。
+- 相对时间必须换成绝对时间：今天是 ${stamp}，「今天」指 ${stamp}，「最近」按 ${now.getFullYear()} 年内理解，「去年」是 ${now.getFullYear() - 1} 年。
+- 需要最新动态时，查询词里带上年份 ${now.getFullYear()}。
+- 如果这个问题根本不需要查外部资料（纯创作指令，例如「帮我写一段」），只输出一行：无需检索`,
+    user: question
+  }
+}
+
+/**
+ * 模型输出的检索词 → 数组。
+ *
+ * 模型经常带回编号、项目符号、解释性长句，这里一律清洗；清洗完为空就返回空数组，
+ * 由上层退回规则词——宁可用规则词查一次，也不能因为解析失败这一轮就不查了。
+ */
+export function parseQueryPlan(raw: string, maxQueries: number): string[] | null {
+  const lines = String(raw || '')
+    .split(/\r?\n|；|;/)
+    // 只清「1. 」「- 」「• 」这类前缀；不能把开头的数字一起吃掉，「2026 年」也是数字开头
+    .map((s) => s.replace(/^\s*(?:[-*•·]+|\d{1,2}\s*[.、)）])\s*/, '').replace(/^[[\]「」"']+/, '').trim())
+    .filter(Boolean)
+  // [] 只表示「模型明确说不用查」；解析不出任何可用词时返回 null，让上层退回规则词
+  if (!lines.length) return null
+  if (lines.some((l) => /无需检索|不需要检索|不用检索|无需联网/.test(l)) && lines.length <= 2) return []
+  const out: string[] = []
+  for (const line of lines) {
+    // 超过 80 字的基本是解释，不是查询词
+    if (line.length > 80) continue
+    const q = line.replace(/[。，,！!？?]+$/g, '').trim().slice(0, 60)
+    if (q.length < 2) continue
+    if (!out.includes(q)) out.push(q)
+    if (out.length >= Math.max(1, maxQueries)) break
+  }
+  return out.length ? out : null
+}
+
 const pad = (n: number): string => String(n).padStart(2, '0')
 function stamp(at: number): string {
   const d = new Date(at)
@@ -116,6 +165,8 @@ export interface ResearchDeps {
   maxResults: number
   maxQueries: number
   run: (req: { channelId: string; queries: string[]; maxResults: number }) => Promise<SearchRunResult>
+  /** 可选：让模型把问题改写成检索词。返回空数组或抛错时退回规则拼的查询词 */
+  plan?: (question: string) => Promise<string[] | null>
   /** 可选：把结果压成摘要。抛错或条数对不上都退回原始 snippet */
   summarize?: (text: string) => Promise<string | null>
 }
@@ -155,16 +206,31 @@ async function applySummary(
 }
 
 export async function research(question: string, deps: ResearchDeps): Promise<ResearchOutcome> {
-  const plan = buildQueries(question, deps.maxQueries, { general: deps.general })
-  if (!plan.queries.length) return { meta: null, text: '', skipped: true, skipReason: plan.reason }
+  const rulePlan = buildQueries(question, deps.maxQueries, { general: deps.general })
+  // 创作指令连查询词都不用请模型规划：这类问题查了只会把别人的桥段塞进来
+  if (rulePlan.reason === 'creative') return { meta: null, text: '', skipped: true, skipReason: 'creative' }
+
+  let queries = rulePlan.queries
+  if (deps.plan) {
+    try {
+      const planned = await deps.plan(question)
+      if (planned && planned.length) queries = planned
+      // 模型明说「无需检索」：尊重它（这条路径只在通用模式出现，规则词在那儿总是有的）
+      else if (planned) return { meta: null, text: '', skipped: true, skipReason: 'creative' }
+      // planned === null：解析不出可用词，退回规则词——宁可查得糙一点，也不能这一轮不查
+    } catch {
+      /* 规划失败就用规则词，不能因为这一步让这一轮不查 */
+    }
+  }
+  if (!queries.length) return { meta: null, text: '', skipped: true, skipReason: rulePlan.reason }
 
   let res: SearchRunResult
   try {
-    res = await deps.run({ channelId: deps.channelId, queries: plan.queries, maxResults: deps.maxResults })
+    res = await deps.run({ channelId: deps.channelId, queries, maxResults: deps.maxResults })
   } catch (e) {
     res = {
       hits: [],
-      queries: plan.queries,
+      queries,
       cached: false,
       error: { kind: 'network', message: (e as Error).message }
     }
